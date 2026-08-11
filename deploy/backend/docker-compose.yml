@@ -1,0 +1,45 @@
+# BC Inventory — API tier   ·   staging host 172.28.92.57
+# Published on 8085: the 3000/4000/5000 ranges and 13000 are already taken on this host.
+name: bc-inventory-api
+
+services:
+  api:
+    build:
+      context: ../../backend
+    image: bc-inventory-api:staging
+    container_name: bc-inventory-api
+    restart: unless-stopped
+    environment:
+      ConnectionStrings__Db: "Host=${DB_HOST:-172.28.92.60};Port=${DB_PORT:-5443};Database=bcinventory;Username=bcapp;Password=${DB_PASSWORD:?set DB_PASSWORD in .env};Maximum Pool Size=25;Timeout=15;Command Timeout=60"
+      Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env — 32+ random chars}
+      # First-run only: initial passwords for the two seeded accounts.
+      Seed__AdminPassword: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
+      Seed__SitePassword: ${SEED_SITE_PASSWORD:?set SEED_SITE_PASSWORD in .env}
+      # Alert e-mail. Point at the corporate relay, or leave unset to disable sending.
+      Smtp__Host: ${SMTP_HOST:-}
+      Smtp__Port: ${SMTP_PORT:-25}
+      Smtp__From: ${SMTP_FROM:-bc-inventory@energi-up.com}
+      # Sample auto-ingest is demo data — leave unmounted so staging starts empty.
+      SampleData__Dir: ${SAMPLE_DIR:-/samples}
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Staging
+      TZ: Asia/Jakarta
+    ports:
+      # reachable from the frontend server only (see security-group rules in DEPLOYMENT.md)
+      - "172.28.92.57:8085:8080"
+    volumes:
+      # Uncomment to seed staging with the sample extracts on first start:
+      # - ../../docs:/samples:ro
+      - bcinv_dpkeys:/root/.aspnet/DataProtection-Keys
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/v1/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  bcinv_dpkeys:

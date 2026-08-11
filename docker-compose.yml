@@ -1,0 +1,56 @@
+name: bc-inventory
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bcinventory
+      POSTGRES_USER: bcapp
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bcapp_local_dev}
+    ports:
+      # host 5442 — 5433/5434/5435/5436/5439/5440 are taken by other local projects
+      - "5442:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bcapp -d bcinventory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mail:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"          # web UI to inspect alert e-mails
+
+  api:
+    build: ./backend
+    environment:
+      ConnectionStrings__Db: "Host=db;Port=5432;Database=bcinventory;Username=bcapp;Password=${DB_PASSWORD:-bcapp_local_dev};Maximum Pool Size=25"
+      Jwt__Key: ${JWT_KEY:-local-dev-signing-key-change-me-0123456789abcdef}
+      SampleData__Dir: /samples
+      Smtp__Host: mail
+      Smtp__Port: "1025"
+      Smtp__From: bc-inventory@energi-up.com
+      ASPNETCORE_URLS: http://+:8080
+    volumes:
+      - ./docs:/samples:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  web:
+    build: ./frontend
+    ports:
+      - "8088:80"
+    depends_on:
+      - api
+
+volumes:
+  dbdata:

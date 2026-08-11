@@ -1,0 +1,40 @@
+# ---------- secrets ----------
+# Real credentials: DB password, JWT signing key, seed passwords.
+.env
+.env.local
+deploy/**/.env
+!**/.env.example
+
+# ---------- real customs data ----------
+# The sample extracts are genuine BC 2.3 / BC 4.0 / Laporan exports: real vendor and supplier
+# names, NPWP tax IDs, TPB permit numbers, PO references and transaction values. They are
+# operational data, not source code, and BC40 alone is 31 MB.
+# If you deliberately want them in a PRIVATE repo, delete this block.
+docs/*.xls
+docs/*.xlsx
+~$*.xls*
+
+# The written specifications are project work product and DO belong in the repo:
+!docs/*.docx
+!docs/*.html
+
+# ---------- build output ----------
+node_modules/
+frontend/dist/
+backend/bin/
+backend/obj/
+*.user
+
+# ---------- deployment archives ----------
+*.tar.gz
+*.zip
+
+# ---------- local tooling / OS ----------
+.claude/settings.local.json
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log

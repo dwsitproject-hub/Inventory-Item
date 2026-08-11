@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BC Inventory Reporting System — UI Mockup</title>
+<style>
+  :root{
+    --navy:#0E2841; --navy2:#123454; --red:#B73532; --steel:#156082; --amber:#B47F2E;
+    --ink:#1f2733; --muted:#6b7683; --line:#e2e6ec; --bg:#eef1f5; --card:#ffffff;
+    --ok:#1E7A46; --okbg:#e6f4ec; --warn:#B4551F; --warnbg:#fbeee4; --err:#b3261e; --errbg:#fbe9e7;
+    --chip:#eaf0f6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+  .app{display:grid;grid-template-columns:230px 1fr;grid-template-rows:56px 1fr;height:100vh;grid-template-areas:"brand top" "side main"}
+  /* brand */
+  .brand{grid-area:brand;background:var(--navy);color:#fff;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid #0a1e30}
+  .brand .logo{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,var(--red),#e0574f);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
+  .brand b{font-size:14px;letter-spacing:.3px}
+  .brand span{font-size:10.5px;color:#9db3c7;display:block;margin-top:-2px}
+  /* topbar */
+  .top{grid-area:top;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+  .top .scope{font-size:12.5px;color:var(--muted)}
+  .top .scope b{color:var(--navy)}
+  .top .right{display:flex;align-items:center;gap:16px}
+  .bell{position:relative;cursor:pointer;font-size:18px;color:var(--navy)}
+  .bell .dot{position:absolute;top:-4px;right:-6px;background:var(--red);color:#fff;font-size:9px;font-weight:700;border-radius:9px;padding:1px 5px}
+  .user{display:flex;align-items:center;gap:8px;cursor:pointer}
+  .avatar{width:30px;height:30px;border-radius:50%;background:var(--steel);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+  .user small{display:block;color:var(--muted);font-size:11px}
+  /* sidebar */
+  .side{grid-area:side;background:var(--navy);padding:12px 10px;overflow:auto}
+  .side .grp{color:#6f8598;font-size:10px;letter-spacing:1px;text-transform:uppercase;margin:14px 12px 6px}
+  .nav{display:flex;align-items:center;gap:10px;color:#cdd9e4;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13.5px;margin-bottom:2px}
+  .nav:hover{background:#16324e}
+  .nav.active{background:var(--red);color:#fff;font-weight:600}
+  .nav .i{width:17px;text-align:center}
+  /* main */
+  .main{grid-area:main;overflow:auto;padding:22px 26px}
+  .screen{display:none}
+  .screen.on{display:block}
+  h1.page{font-size:20px;margin:0 0 2px;color:var(--navy)}
+  .crumb{color:var(--muted);font-size:12px;margin-bottom:18px}
+  .asof{float:right;font-size:11.5px;color:var(--muted);background:#fff;border:1px solid var(--line);padding:4px 10px;border-radius:20px}
+  /* cards */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .l{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .kpi .v{font-size:23px;font-weight:800;color:var(--navy);margin-top:6px}
+  .kpi .d{font-size:11.5px;margin-top:4px}
+  .up{color:var(--ok)} .down{color:var(--err)}
+  .row2{display:grid;grid-template-columns:1.5fr 1fr;gap:14px;margin-bottom:16px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .panel h3{margin:0 0 12px;font-size:14px;color:var(--navy)}
+  .panel h3 .more{float:right;font-size:11.5px;color:var(--steel);font-weight:500;cursor:pointer}
+  /* chart */
+  .chart{display:flex;align-items:flex-end;gap:10px;height:150px;padding-top:8px}
+  .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px}
+  .bar .stack{width:60%;display:flex;flex-direction:column-reverse;height:120px;justify-content:flex-start}
+  .bar .in{background:var(--steel)} .bar .out{background:var(--amber)}
+  .bar small{font-size:10.5px;color:var(--muted)}
+  .legend{display:flex;gap:16px;font-size:11.5px;color:var(--muted);margin-top:8px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  /* lists */
+  .item{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .item:last-child{border-bottom:none}
+  .badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px}
+  .b-ok{background:var(--okbg);color:var(--ok)} .b-warn{background:var(--warnbg);color:var(--warn)} .b-err{background:var(--errbg);color:var(--err)}
+  .b-info{background:#e7f0f7;color:var(--steel)}
+  /* filter bar */
+  .filters{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+  .f{display:flex;flex-direction:column;gap:4px}
+  .f label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px}
+  .f select,.f input{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;background:#fff;min-width:130px;color:var(--ink)}
+  .toggle{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .toggle span{padding:7px 12px;font-size:12.5px;cursor:pointer;background:#fff}
+  .toggle span.sel{background:var(--navy);color:#fff}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chk{font-size:11.5px;border:1px solid var(--line);border-radius:20px;padding:4px 10px;cursor:pointer;background:#fff;color:var(--muted)}
+  .chk.on{background:var(--steel);color:#fff;border-color:var(--steel)}
+  .btn{border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn.p{background:var(--navy);color:#fff} .btn.r{background:var(--red);color:#fff}
+  .btn.o{background:#fff;color:var(--navy);border:1px solid var(--line)}
+  /* table */
+  .tablewrap{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .tbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .tbar .exp{display:flex;gap:8px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{background:#f6f8fa;text-align:left;padding:10px 12px;color:var(--navy);font-weight:700;border-bottom:1px solid var(--line);white-space:nowrap;font-size:11.5px}
+  td{padding:10px 12px;border-bottom:1px solid #eef1f4;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#fafbfc}
+  .pager{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;font-size:12px;color:var(--muted)}
+  .pager .pg{display:flex;gap:4px}
+  .pager .pg span{border:1px solid var(--line);border-radius:6px;padding:4px 9px;cursor:pointer;background:#fff}
+  .pager .pg span.sel{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .idt{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px}
+  .sso{background:#e7f0f7;color:var(--steel)} .std{background:#f0ecf7;color:#6b4fa0}
+  .scopetag{font-size:10.5px;background:var(--chip);border-radius:5px;padding:2px 6px;color:var(--navy);margin:1px}
+  .dot2{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+  .act{color:var(--steel);cursor:pointer;font-weight:600;font-size:12px}
+  .act.d{color:var(--red)}
+  /* report grid: sort + reorder + column chooser (FR-R9..R13) */
+  .tbar{position:relative}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{background:#eef2f6}
+  th .si{color:var(--steel);font-size:9px;margin-left:4px}
+  th .si sup{font-size:8px}
+  th.dragging{opacity:.35}
+  th.dragover{border-left:3px solid var(--red)}
+  .colpanel{position:absolute;right:16px;top:44px;width:300px;max-height:400px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(15,40,65,.18);z-index:20;padding:10px;display:none;text-align:left}
+  .colpanel.open{display:block}
+  .colpanel h4{margin:2px 4px 8px;font-size:11.5px;color:var(--navy);text-transform:uppercase;letter-spacing:.4px}
+  .colrow{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;font-size:12.5px}
+  .colrow:hover{background:#f6f8fa}
+  .colrow .mv{margin-left:auto;display:flex;gap:2px}
+  .colrow .mv span{cursor:pointer;border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:10px;color:var(--steel);background:#fff}
+  .colrow.off{color:var(--muted)}
+  /* drawer */
+  .drawer{position:fixed;top:0;right:0;width:420px;height:100vh;background:#fff;box-shadow:-8px 0 30px rgba(0,0,0,.18);transform:translateX(100%);transition:transform .25s;z-index:40;padding:22px;overflow:auto}
+  .drawer.open{transform:translateX(0)}
+  .drawer h2{margin:0 0 4px;font-size:17px;color:var(--navy)}
+  .drawer .sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+  .fld{margin-bottom:14px}
+  .fld label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.3px}
+  .fld input,.fld select{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:13px}
+  .overlay{position:fixed;inset:0;background:rgba(15,40,65,.35);z-index:30;display:none}
+  .overlay.open{display:block}
+  .note{background:#f6f8fa;border:1px dashed var(--line);border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--muted);margin-top:6px}
+  .wf{font-size:11px;color:var(--muted);background:#fff8ec;border:1px solid #f0e2c0;border-radius:8px;padding:8px 12px;margin-bottom:16px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="brand"><div class="logo">KPN</div><div><b>BC Inventory</b><span>Reporting System</span></div></div>
+  <div class="top">
+    <div class="scope">Scope: <b>All entities</b> · Head Office &nbsp;|&nbsp; <span id="scopedetail">6 PT · 40 TPB · 7 customs offices</span></div>
+    <div class="right">
+      <div class="bell" onclick="go('notif')">🔔<span class="dot">3</span></div>
+      <div class="user"><div class="avatar">JP</div><div><b style="font-size:12.5px">Jerry Pratama</b><small>Super Admin · IT</small></div></div>
+    </div>
+  </div>
+  <div class="side">
+    <div class="grp">Main</div>
+    <div class="nav active" data-s="dash" onclick="go('dash')"><span class="i">▚</span> Dashboard</div>
+    <div class="nav" data-s="report" onclick="go('report')"><span class="i">▤</span> Reports</div>
+    <div class="nav" data-s="ingest" onclick="go('ingest')"><span class="i">⭳</span> Ingestion &amp; Upload</div>
+    <div class="nav" data-s="notif" onclick="go('notif')"><span class="i">🔔</span> Notifications</div>
+    <div class="grp">Administration</div>
+    <div class="nav" data-s="admin" onclick="go('admin')"><span class="i">👥</span> User Management</div>
+    <div class="nav" data-s="master" onclick="go('master')"><span class="i">▦</span> Master Data</div>
+    <div class="nav" data-s="alerts" onclick="go('alerts')"><span class="i">⚙</span> Alert Rules</div>
+    <div class="grp">Account</div>
+    <div class="nav" onclick="go('dash')"><span class="i">⇦</span> Sign out</div>
+  </div>
+
+  <div class="main">
+    <!-- DASHBOARD -->
+    <div class="screen on" id="dash">
+      <div class="asof">Data as-of: 24 Jul 2026, 06:15 · source: SAP_EXTRACT_20260724.csv</div>
+      <h1 class="page">Dashboard</h1>
+      <div class="crumb">Home · Overview (scoped to your access)</div>
+      <div class="kpis">
+        <div class="kpi"><div class="l">Closing Saldo (MT)</div><div class="v">48,210</div><div class="d up">▲ 2.3% vs last period</div></div>
+        <div class="kpi"><div class="l">Inbound this month</div><div class="v">12,540</div><div class="d up">▲ 480 docs</div></div>
+        <div class="kpi"><div class="l">Outbound this month</div><div class="v">11,020</div><div class="d down">▼ 1.1%</div></div>
+        <div class="kpi"><div class="l">Open Variances</div><div class="v" style="color:var(--warn)">7</div><div class="d">beyond tolerance</div></div>
+      </div>
+      <div class="row2">
+        <div class="panel">
+          <h3>Inbound vs Outbound (MT) <span class="more" onclick="go('report')">View reports →</span></h3>
+          <div class="chart" id="chart"></div>
+          <div class="legend"><span><i style="background:var(--steel)"></i>Inbound</span><span><i style="background:var(--amber)"></i>Outbound</span></div>
+        </div>
+        <div class="panel">
+          <h3>Latest ingestion</h3>
+          <div class="item"><span>SAP_EXTRACT_20260724.csv</span><span class="badge b-ok">Loaded · 4,812</span></div>
+          <div class="item"><span>EUP_manual_upload.xlsx</span><span class="badge b-warn">12 rejected</span></div>
+          <div class="item"><span>SAP_EXTRACT_20260723.csv</span><span class="badge b-ok">Loaded · 4,510</span></div>
+          <div class="item"><span>RFI PPB-KB batch</span><span class="badge b-err">Parse error</span></div>
+          <div class="note">Errors and rejects raise alerts to Admins &amp; IT automatically.</div>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="panel">
+          <h3>Top reconciliation variances <span class="more" onclick="go('report')">Open LPM →</span></h3>
+          <div class="item"><span><span class="dot2" style="background:var(--warn)"></span>PT EUP · TPB 31/MK/WBC.16/2026 · RBDPO</span><span class="badge b-warn">+1.8% susut</span></div>
+          <div class="item"><span><span class="dot2" style="background:var(--err)"></span>PT Cisadane · PFAD byproduct</span><span class="badge b-err">Unrecorded</span></div>
+          <div class="item"><span><span class="dot2" style="background:var(--warn)"></span>PT Royal Foods · Olein</span><span class="badge b-warn">UoM mismatch</span></div>
+        </div>
+        <div class="panel">
+          <h3>Unread alerts <span class="more" onclick="go('notif')">All →</span></h3>
+          <div class="item"><span>New file uploaded — EUP</span><span class="badge b-info">2m ago</span></div>
+          <div class="item"><span>Ingestion error — RFI batch</span><span class="badge b-err">18m ago</span></div>
+          <div class="item"><span>Variance flagged — Cisadane</span><span class="badge b-warn">1h ago</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REPORT VIEW -->
+    <div class="screen" id="report">
+      <div class="asof">Data as-of: 24 Jul 2026, 06:15</div>
+      <h1 class="page">Reports — Pemasukan Barang (Inbound)</h1>
+      <div class="crumb">Reports · Inbound · Per customs document</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--muted)">Preview as:</span>
+        <div class="toggle" id="viewas">
+          <span class="sel" onclick="viewAs('admin')">Admin / HO (can select)</span>
+          <span onclick="viewAs('site')">Site BC user (scope-locked)</span>
+        </div>
+      </div>
+      <div class="filters">
+        <div class="f"><label>Entity (PT) <span id="entlock" style="display:none;color:var(--steel);text-transform:none;letter-spacing:0">🔒 your assignment</span></label><select id="fent"><option>PT Energi Unggul Persada</option><option>PT Cisadane Raya Chemicals</option><option>All (my scope)</option></select></div>
+        <div class="f"><label>Site <span id="sitelock" style="display:none;color:var(--steel);text-transform:none;letter-spacing:0">🔒 your assignment</span></label><select id="fsite"><option>Bontang</option><option>Belawan</option><option>All sites</option></select></div>
+        <div class="f"><label>TPB permit <span style="color:var(--muted);text-transform:none;letter-spacing:0">(optional)</span></label><select><option>All my TPBs (within scope)</option><option>31/MK/WBC.16/2026</option><option>180/WBC.16/2021</option></select></div>
+        <div class="f"><label>From</label><input value="01.07.2026"></div>
+        <div class="f"><label>To</label><input value="24.07.2026"></div>
+        <div class="f"><label>Date basis</label><div class="toggle"><span class="sel">Date BC</span><span>GR/GI</span></div></div>
+        <div class="f" style="flex:1"><label>BC document type</label>
+          <div class="chips">
+            <span class="chk on">BC 23</span><span class="chk">27</span><span class="chk">27S</span><span class="chk">27HS</span><span class="chk">40</span><span class="chk">262</span><span class="chk">16</span>
+          </div>
+        </div>
+        <button class="btn p">Run report</button>
+      </div>
+      <div class="wf" id="scopenote">Wireframe note: for a Site BC user, Entity and Site are locked to their assignment (read-only) and only TPB is an optional filter. Admins / HO users can select Entity, Site and TPB across their scope. A blank filter always means "all within my scope".</div>
+      <div class="tablewrap">
+        <div class="tbar">
+          <div style="font-size:12.5px;color:var(--muted)">Showing <b>1–8</b> of <b>4,812</b> rows · server-side paged</div>
+          <div class="exp"><button class="btn o" onclick="toggleColPanel(event)">⚙ Columns</button><button class="btn o">Excel</button><button class="btn o">CSV</button><button class="btn o">PDF</button></div>
+          <div class="colpanel" id="colpanel" onclick="event.stopPropagation()"></div>
+        </div>
+        <div style="overflow:auto">
+        <table>
+          <thead id="rhead"></thead>
+          <tbody id="rrows"></tbody>
+        </table>
+        </div>
+        <div class="pager">
+          <span>Rows per page: 25 ▾</span>
+          <div class="pg"><span>‹</span><span class="sel">1</span><span>2</span><span>3</span><span>…</span><span>193</span><span>›</span></div>
+        </div>
+      </div>
+      <div class="wf" style="margin-top:16px">Wireframe note (FR-R9–R13): <b>⚙ Columns</b> opens the column chooser — show/hide any stored field (incl. every upload field per PRD v1.2 Appendices D–E) and re-order via drag-and-drop of a column header or the ↑↓ controls. Click a column header to sort (Shift+click adds a secondary sort); sorting &amp; paging execute server-side on the full filtered set. The layout persists per user and can be saved as a named view; exports follow the visible columns, order and sort. <b>Field names are the upload template headers, verbatim</b> (e.g. "No. PIB", "PibDate", "NoHS", "Commodity"); where the template repeats a name it is qualified by its source group, e.g. "Amount After Facility / BM".</div>
+    </div>
+
+    <!-- INGESTION -->
+    <div class="screen" id="ingest">
+      <h1 class="page">Ingestion &amp; Upload</h1>
+      <div class="crumb">Data · SAP shared-folder ingestion &amp; manual upload</div>
+      <div class="row2">
+        <div class="panel">
+          <h3>Recent ingestions</h3>
+          <table>
+            <thead><tr><th>File</th><th>Source</th><th>Rows</th><th>Status</th><th>When</th></tr></thead>
+            <tbody>
+              <tr><td>SAP_EXTRACT_20260724.csv</td><td><span class="idt sso">SAP</span></td><td>4,812</td><td><span class="badge b-ok">Loaded</span></td><td>06:15</td></tr>
+              <tr><td>EUP_manual_upload.xlsx</td><td><span class="idt std">Manual</span></td><td>640 <span style="color:var(--warn)">(12 rej.)</span></td><td><span class="badge b-warn">Partial</span></td><td>05:40</td></tr>
+              <tr><td>RFI_PPBKB_batch.csv</td><td><span class="idt sso">SAP</span></td><td>—</td><td><span class="badge b-err">Parse error</span></td><td>05:02</td></tr>
+              <tr><td>SAP_EXTRACT_20260723.csv</td><td><span class="idt sso">SAP</span></td><td>4,510</td><td><span class="badge b-ok">Loaded</span></td><td>Yday</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h3>Manual upload</h3>
+          <div class="note" style="text-align:center;padding:26px 12px;border-style:dashed">⭳ Drag &amp; drop a SAP extract here, or <b style="color:var(--steel)">browse</b><br><small>Validated on the same path as automatic ingestion</small></div>
+          <div class="fld" style="margin-top:14px"><label>Report type</label><select><option>Pemasukan Barang</option><option>Pengeluaran Barang</option><option>LPM Mutasi</option><option>WIP</option></select></div>
+          <div class="grid2"><div class="fld"><label>Entity</label><select><option>PT EUP</option></select></div><div class="fld"><label>TPB</label><select><option>31/MK/WBC.16/2026</option></select></div></div>
+          <button class="btn p" style="width:100%">Validate &amp; upload</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Validation results — EUP_manual_upload.xlsx</h3>
+        <div class="item"><span><span class="dot2" style="background:var(--ok)"></span>628 rows valid — loaded</span><span class="badge b-ok">OK</span></div>
+        <div class="item"><span><span class="dot2" style="background:var(--warn)"></span>Row 44, 51 — missing HS Code</span><span class="badge b-warn">Quarantined</span></div>
+        <div class="item"><span><span class="dot2" style="background:var(--err)"></span>Row 77 — UoM/qty mismatch (kg vs L)</span><span class="badge b-err">Rejected</span></div>
+        <div class="note">Bad rows are quarantined with reasons — never silently dropped. An alert was sent to the entity's Stewards &amp; Admins.</div>
+      </div>
+    </div>
+
+    <!-- NOTIFICATIONS -->
+    <div class="screen" id="notif">
+      <h1 class="page">Notifications</h1>
+      <div class="crumb">In-app notification center · mirrors email alerts</div>
+      <div class="panel">
+        <h3>Recent</h3>
+        <div class="item"><span><span class="badge b-info">Upload</span> &nbsp;New file uploaded — EUP_manual_upload.xlsx (640 rows)</span><span style="color:var(--muted)">2m ago</span></div>
+        <div class="item"><span><span class="badge b-err">Error</span> &nbsp;Ingestion parse error — RFI_PPBKB_batch.csv</span><span style="color:var(--muted)">18m ago</span></div>
+        <div class="item"><span><span class="badge b-warn">Variance</span> &nbsp;Saldo variance beyond tolerance — Cisadane / PFAD</span><span style="color:var(--muted)">1h ago</span></div>
+        <div class="item"><span><span class="badge b-ok">Update</span> &nbsp;Period re-ingested — 23 Jul data refreshed</span><span style="color:var(--muted)">Yesterday</span></div>
+        <div class="item"><span><span class="badge b-info">Access</span> &nbsp;New user activated — a.wijonarko (Site BC, Belawan)</span><span style="color:var(--muted)">Yesterday</span></div>
+      </div>
+    </div>
+
+    <!-- ADMIN / USERS -->
+    <div class="screen" id="admin">
+      <h1 class="page">User Management</h1>
+      <div class="crumb">Administration · Users, roles &amp; access scope</div>
+      <div class="tablewrap">
+        <div class="tbar">
+          <div style="font-size:12.5px;color:var(--muted)"><b>32</b> users · <b>28</b> active · <b>4</b> disabled</div>
+          <button class="btn r" onclick="openDrawer()">+ Add user</button>
+        </div>
+        <div style="overflow:auto">
+        <table>
+          <thead><tr><th>Name</th><th>Email</th><th>Auth</th><th>Role</th><th>Access scope (Entity · Site · TPB)</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            <tr><td>Jerry Pratama</td><td>jerry.hakim@energi-up.com</td><td><span class="idt sso">SSO</span></td><td>Super Admin</td><td><span class="scopetag">All entities</span></td><td><span class="badge b-ok">Active</span></td><td><span class="act">Edit</span></td></tr>
+            <tr><td>M. Wahyudin</td><td>m.wahyudin@ptpriscolin.com</td><td><span class="idt sso">SSO</span></td><td>HO BC User</td><td><span class="scopetag">All entities</span></td><td><span class="badge b-ok">Active</span></td><td><span class="act">Edit</span></td></tr>
+            <tr><td>Aziz Wijonarko</td><td>a.wijonarko@energi-up.com</td><td><span class="idt std">Standalone</span></td><td>Site BC User</td><td><span class="scopetag">PT EUP</span><span class="scopetag">Belawan</span><span class="scopetag">31/MK/WBC.16</span></td><td><span class="badge b-ok">Active</span></td><td><span class="act">Edit</span> · <span class="act">Reset</span></td></tr>
+            <tr><td>Decky Yonanda</td><td>decky@energi-up.com</td><td><span class="idt std">Standalone</span></td><td>Data Steward</td><td><span class="scopetag">PT EUP</span><span class="scopetag">Bontang</span></td><td><span class="badge b-ok">Active</span></td><td><span class="act">Edit</span> · <span class="act">Reset</span></td></tr>
+            <tr><td>BC Officer (Bontang)</td><td>bc.bontang@customs.go.id</td><td><span class="idt std">Standalone</span></td><td>Auditor / Viewer</td><td><span class="scopetag">PT EUP</span><span class="scopetag">Bontang</span></td><td><span class="badge b-ok">Active</span></td><td><span class="act">Edit</span> · <span class="act">Reset</span></td></tr>
+            <tr><td>Old Contractor</td><td>temp@vendor.com</td><td><span class="idt std">Standalone</span></td><td>Site BC User</td><td><span class="scopetag">PT RFI</span></td><td><span class="badge b-err">Disabled</span></td><td><span class="act">Enable</span></td></tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="pager"><span>6 of 32 shown</span><div class="pg"><span>‹</span><span class="sel">1</span><span>2</span><span>3</span><span>›</span></div></div>
+      </div>
+      <div class="wf" style="margin-top:16px">Wireframe note: no hard-delete of users — disable only, to preserve audit history (PRD §6.3). Admin actions are bounded by the admin's own scope.</div>
+    </div>
+
+    <!-- MASTER DATA -->
+    <div class="screen" id="master">
+      <h1 class="page">Master Data</h1>
+      <div class="crumb">Administration · Entities, sites, TPB permits, item/HS catalog</div>
+      <div class="tablewrap">
+        <div class="tbar"><div style="font-size:12.5px;color:var(--muted)">TPB permits · <b>40</b> active</div><button class="btn r">+ Add permit</button></div>
+        <table>
+          <thead><tr><th>TPB Permit No</th><th>Entity</th><th>Site</th><th>Customs office</th><th>Valid to</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>31/MK/WBC.16/2026</td><td>PT EUP</td><td>Bontang</td><td>WBC.16</td><td>2027-12-31</td><td><span class="badge b-ok">Active</span></td></tr>
+            <tr><td>180/WBC.16/2021</td><td>PT EUP</td><td>Belawan</td><td>WBC.16</td><td>2026-12-31</td><td><span class="badge b-ok">Active</span></td></tr>
+            <tr><td>KEP-742/WBC.09/2019</td><td>PT Cisadane</td><td>Tangerang</td><td>WBC.09</td><td>2026-09-30</td><td><span class="badge b-warn">Expiring</span></td></tr>
+            <tr><td>TESTING</td><td>—</td><td>—</td><td>—</td><td>—</td><td><span class="badge b-err">Blocked (test data)</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="wf" style="margin-top:16px">Wireframe note: production master data is validated on save — duplicates and test entries (e.g. "TESTING") are flagged and blocked (PRD FR-A4).</div>
+    </div>
+
+    <!-- ALERT RULES -->
+    <div class="screen" id="alerts">
+      <h1 class="page">Alert Rules</h1>
+      <div class="crumb">Administration · Configure who is notified, for what, on which channel</div>
+      <div class="tablewrap">
+        <div class="tbar"><div style="font-size:12.5px;color:var(--muted)">Event → recipients → channel</div><button class="btn r">+ Add rule</button></div>
+        <table>
+          <thead><tr><th>Event</th><th>Recipients</th><th>Email</th><th>In-app</th><th>Throttle</th></tr></thead>
+          <tbody>
+            <tr><td>New file uploaded</td><td>Stewards + Admins (file scope)</td><td>✔</td><td>✔</td><td>Digest 15m</td></tr>
+            <tr><td>Data updated / re-ingested</td><td>Stewards + Admins; HO BC (opt)</td><td>✔</td><td>✔</td><td>Immediate</td></tr>
+            <tr><td>Ingestion / validation error</td><td>Admins + Super Admin (IT)</td><td>✔</td><td>✔</td><td>Immediate</td></tr>
+            <tr><td>Extract not received</td><td>Admins + Super Admin (IT)</td><td>✔</td><td>✔</td><td>Immediate</td></tr>
+            <tr><td>Reconciliation variance</td><td>Data owners + Admins (scope)</td><td>✔</td><td>✔</td><td>Digest 1h</td></tr>
+            <tr><td>Access / security change</td><td>Super Admin + relevant Admin</td><td>✔</td><td>✔</td><td>Immediate</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ADD USER DRAWER -->
+<div class="overlay" id="ov" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <h2>Add user</h2>
+  <div class="sub">Create an account and assign a role + access scope.</div>
+  <div class="fld"><label>Full name</label><input placeholder="e.g. Andika Pratama"></div>
+  <div class="fld"><label>Email</label><input placeholder="name@energi-up.com"></div>
+  <div class="fld"><label>Authentication</label><select><option>Standalone (site / external BC) — with forgot-password</option><option>Company SSO / Active Directory (Head Office)</option></select></div>
+  <div class="fld"><label>Role</label><select><option>Site BC User</option><option>HO BC User</option><option>Data Steward / Uploader</option><option>Auditor / Viewer</option><option>Admin</option></select></div>
+  <div class="fld"><label>Access scope</label>
+    <div class="grid2"><select><option>PT EUP</option><option>PT Cisadane</option><option>All entities</option></select><select><option>Bontang</option><option>Belawan</option><option>All sites</option></select></div>
+    <div style="margin-top:8px"><select style="width:100%"><option>TPB: 31/MK/WBC.16/2026</option><option>All TPB in scope</option></select></div>
+  </div>
+  <div class="note">Standalone users get an activation email with a one-time link to set their password. SSO users sign in via the corporate directory.</div>
+  <div style="display:flex;gap:10px;margin-top:18px"><button class="btn p" onclick="closeDrawer()">Create &amp; invite</button><button class="btn o" onclick="closeDrawer()">Cancel</button></div>
+</div>
+
+<script>
+  const nav = document.querySelectorAll('.nav[data-s]');
+  function go(s){
+    document.querySelectorAll('.screen').forEach(el=>el.classList.toggle('on', el.id===s));
+    nav.forEach(n=>n.classList.toggle('active', n.dataset.s===s));
+    document.querySelector('.main').scrollTop=0;
+  }
+  function viewAs(mode){
+    const tog=document.getElementById('viewas').children;
+    tog[0].classList.toggle('sel',mode==='admin');tog[1].classList.toggle('sel',mode==='site');
+    const ent=document.getElementById('fent'),site=document.getElementById('fsite');
+    const locked=(mode==='site');
+    ent.disabled=locked;site.disabled=locked;
+    ent.style.background=locked?'#eef1f5':'#fff';site.style.background=locked?'#eef1f5':'#fff';
+    document.getElementById('entlock').style.display=locked?'inline':'none';
+    document.getElementById('sitelock').style.display=locked?'inline':'none';
+    if(locked){ent.value='PT Energi Unggul Persada';site.value='Bontang';
+      document.getElementById('scopedetail').textContent='PT EUP · Bontang';}
+    else{document.getElementById('scopedetail').textContent='6 PT · 40 TPB · 7 customs offices';}
+  }
+  function openDrawer(){document.getElementById('drawer').classList.add('open');document.getElementById('ov').classList.add('open');}
+  function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('ov').classList.remove('open');}
+
+  // chart
+  const data=[[820,760],[910,880],[1040,970],[980,1010],[1120,1040],[1254,1102]];
+  const labels=['Feb','Mar','Apr','May','Jun','Jul'];
+  const max=1300;
+  document.getElementById('chart').innerHTML=data.map((d,i)=>`
+    <div class="bar">
+      <div class="stack">
+        <div class="in" style="height:${d[0]/max*120}px"></div>
+      </div>
+      <small>${labels[i]}</small>
+    </div>`).join('');
+  // overlay two-series: rebuild with two mini-bars
+  document.getElementById('chart').innerHTML=data.map((d,i)=>`
+    <div class="bar">
+      <div style="display:flex;gap:3px;align-items:flex-end;height:120px">
+        <div class="in" style="width:11px;height:${d[0]/max*120}px"></div>
+        <div class="out" style="width:11px;height:${d[1]/max*120}px"></div>
+      </div>
+      <small>${labels[i]}</small>
+    </div>`).join('');
+
+  // ----- Reports grid: column chooser, sort, reorder (FR-R9..R13) -----
+  // Column names are the exact upload template headers (PRD v1.2 Appendices D–E)
+  const COLS=[
+    {k:'no',l:'No',gen:true,fixed:true},
+    {k:'status',l:'Status'},
+    {k:'tipe',l:'Tipe PIB'},
+    {k:'nopib',l:'No. PIB'},
+    {k:'pibdate',l:'PibDate',date:true},
+    {k:'supplier',l:'Supplier Name'},
+    {k:'matcode',l:'Material Code'},
+    {k:'commodity',l:'Commodity'},
+    {k:'nohs',l:'NoHS'},
+    {k:'mtype',l:'M.Type'},
+    {k:'unit',l:'Unit'},
+    {k:'qty',l:'Qty',num:true},
+    {k:'nilaipib',l:'Nilai PIB',num:true},
+    {k:'ccypib',l:'Ccy PIB'},
+    // additional stored upload fields — hidden by default (names verbatim per Appendix D)
+    {k:'aju',l:'No.Pengajuan PIB',x:1},
+    {k:'noco',l:'No. Co',x:1},
+    {k:'vendor',l:'Vendor Code',x:1},
+    {k:'country',l:'Supplier Country',x:1},
+    {k:'negara',l:'Negara Asal Barang',x:1},
+    {k:'invno',l:'Invoice No',x:1},
+    {k:'invdate',l:'Invoice Date',date:true,x:1},
+    {k:'incoterm',l:'Incoterm',x:1},
+    {k:'pono',l:'PO No',x:1},
+    {k:'plant',l:'Plant PO',x:1},
+    {k:'kurs',l:'Kurs PIB',num:true,x:1},
+    {k:'cifidr',l:'(IDR) CIF Amount',num:true,x:1},
+    {k:'aafbm',l:'Amount After Facility / BM',num:true,x:1},
+    {k:'aafppn',l:'Amount After Facility / PPN',num:true,x:1},
+    {k:'freight',l:'Freight Cost',num:true,x:1},
+    {k:'blno',l:'BL No',x:1}
+  ];
+  const DEFAULT_VISIBLE=COLS.filter(c=>!c.x).map(c=>c.k);
+  let visibleCols=[...DEFAULT_VISIBLE];
+  let sorts=[]; // [{k,d:1|-1}] — first entry = primary sort
+  const items=[
+    ['VALVE,CYLINDER CKD SAB3A-50A-0','8481.20.20','PC','SPAR'],
+    ['BLEACHING EARTH TONSIL 419 FF','3802.90.00','KG','RAWM'],
+    ['HEXANE TECHNICAL GRADE','2901.10.00','L','RAWM'],
+    ['PUMP,CENTRIFUGAL CDX 120/12','8413.70.19','PC','SPAR'],
+    ['CITRIC ACID MONOHYDRATE BP98','2918.14.00','KG','RAWM'],
+    ['BEARING,ROLLER SKF 22218-EK','8482.20.00','PC','SPAR'],
+    ['FILTER,ELEMENT HYDRAULIC HC9600','8421.23.29','PC','SPAR'],
+    ['PHOSPHORIC ACID 85% FOOD GRADE','2809.20.32','KG','RAWM']
+  ];
+  const suppliers=['FX INTERNATIONAL CO. LTD.','SUN PLAN DEVELOPMENT LTD.','ARSHINE LIFESCIENCE CO.LIMITED','BLACK STONE TRADING PTE. LTD.','QINGDAO HISEA CHEM CO. LTD.','SKF SOUTH EAST ASIA PTE','PALL FILTRATION PTE LTD','PRAYON S.A.'];
+  const countries=['China','China','Hong Kong','Singapore','China','Singapore','Singapore','Belgium'];
+  const terms=['EXW','CIF','CIF','FOB','CFR','CIF','EXW','CIF'];
+  const ROWS=items.map((it,i)=>{
+    const q=(8+i*37)*(it[3]==='RAWM'?250:1);
+    const val=Math.round(q*(it[3]==='RAWM'?1.4:1420)*(1+i*0.03));
+    return {status:i%3===0?'Convert to STO':'New',
+      tipe:i%2===0?'BC 2.0':'BC 2.3',
+      nopib:'4349'+(51+i), pibdate:(6+i)+'.07.2026',
+      supplier:suppliers[i], matcode:'9'+(12+i)+'.'+(503+i*11)+'.00'+(2+i),
+      commodity:it[0], nohs:it[1], mtype:it[3], unit:it[2],
+      qty:q, nilaipib:val, ccypib:i%2===0?'CNY':'USD',
+      aju:'0000'+(20+i%2*3)+'-ENA504-202606'+(24+i)+'-0800'+(17+i),
+      noco:'0226112320002'+(8087+i), vendor:'IN114001'+(60+i),
+      country:countries[i], negara:countries[i].toUpperCase(),
+      invno:'FX-100203'+(8265+i), invdate:(11+i)+'.05.2026',
+      incoterm:terms[i], pono:'100203'+(7792+i), plant:'EU72',
+      kurs:i%2===0?2634.29:16234.5, cifidr:Math.round(val*(i%2===0?2634:16234)),
+      aafbm:0, aafppn:Math.round(val*(i%2===0?2634:16234)*0.11),
+      freight:Math.round(val*0.055), blno:'TL2606'+(1902+i)};
+  });
+  const colByK=k=>COLS.find(c=>c.k===k);
+  const parseDate=s=>{const p=s.split('.');return p[2]+p[1]+p[0].padStart(2,'0');};
+  function sortedRows(){
+    const r=[...ROWS];
+    if(sorts.length) r.sort((a,b)=>{
+      for(const s of sorts){
+        const c=colByK(s.k); if(c.gen) continue;
+        let av=a[s.k], bv=b[s.k];
+        if(c.date){av=parseDate(av);bv=parseDate(bv);}
+        if(av<bv) return -s.d; if(av>bv) return s.d;
+      }
+      return 0;
+    });
+    return r;
+  }
+  const fmt=(c,v)=>c.num?Number(v).toLocaleString():v;
+  function renderReport(){
+    const head=document.getElementById('rhead');
+    head.innerHTML='<tr>'+visibleCols.map(k=>{
+      const c=colByK(k), si=sorts.findIndex(s=>s.k===k);
+      const ind=si>-1?'<span class="si">'+(sorts[si].d===1?'▲':'▼')+(sorts.length>1?'<sup>'+(si+1)+'</sup>':'')+'</span>':'';
+      return '<th class="'+(c.gen?'':'sortable')+'" draggable="'+(c.fixed?'false':'true')+'" data-k="'+k+'" title="'+(c.gen?'':'Click: sort · Shift+click: multi-sort · Drag: reorder')+'">'+c.l+ind+'</th>';
+    }).join('')+'</tr>';
+    document.getElementById('rrows').innerHTML=sortedRows().map((r,i)=>'<tr>'+visibleCols.map(k=>{
+      const c=colByK(k);
+      return '<td>'+(c.gen?i+1:fmt(c,r[k]))+'</td>';
+    }).join('')+'</tr>').join('');
+    head.querySelectorAll('th').forEach(th=>{
+      const k=th.dataset.k;
+      th.onclick=e=>toggleSort(k,e.shiftKey);
+      th.ondragstart=e=>{e.dataTransfer.setData('text/plain',k);th.classList.add('dragging');};
+      th.ondragend=()=>th.classList.remove('dragging');
+      th.ondragover=e=>{if(!colByK(k).fixed){e.preventDefault();th.classList.add('dragover');}};
+      th.ondragleave=()=>th.classList.remove('dragover');
+      th.ondrop=e=>{e.preventDefault();th.classList.remove('dragover');
+        const from=e.dataTransfer.getData('text/plain');
+        if(from&&from!==k&&!colByK(k).fixed) moveCol(from,k);};
+    });
+  }
+  function toggleSort(k,multi){
+    if(colByK(k).gen) return;
+    const i=sorts.findIndex(s=>s.k===k);
+    if(!multi){
+      if(i===-1) sorts=[{k,d:1}];
+      else if(sorts[i].d===1) sorts=[{k,d:-1}];
+      else sorts=[];
+    }else{
+      if(i===-1) sorts.push({k,d:1});
+      else if(sorts[i].d===1) sorts[i].d=-1;
+      else sorts.splice(i,1);
+    }
+    renderReport();
+  }
+  function moveCol(from,to){
+    const f=visibleCols.indexOf(from), t=visibleCols.indexOf(to);
+    if(f===-1||t===-1) return;
+    visibleCols.splice(f,1);
+    visibleCols.splice(visibleCols.indexOf(to)+(f<t?1:0),0,from);
+    renderReport(); renderColPanel();
+  }
+  function renderColPanel(){
+    const vis=visibleCols.map(colByK), hid=COLS.filter(c=>!visibleCols.includes(c.k));
+    document.getElementById('colpanel').innerHTML=
+      '<h4>Shown ('+vis.length+') — ↑↓ to reorder</h4>'+vis.map(c=>
+        '<div class="colrow"><input type="checkbox" checked '+(c.fixed?'disabled':'')+' onchange="colToggle(\''+c.k+'\')"><span>'+c.l+'</span>'+
+        (c.fixed?'':'<span class="mv"><span onclick="colMove(\''+c.k+'\',-1)">↑</span><span onclick="colMove(\''+c.k+'\',1)">↓</span></span>')+'</div>').join('')+
+      '<h4 style="margin-top:10px">Available fields ('+hid.length+')</h4>'+hid.map(c=>
+        '<div class="colrow off"><input type="checkbox" onchange="colToggle(\''+c.k+'\')"><span>'+c.l+'</span></div>').join('')+
+      '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn o" style="flex:1" onclick="colReset()">Reset to default</button><button class="btn p" style="flex:1">Save as view</button></div>'+
+      '<div class="note" style="margin-top:8px">Every stored field is available — incl. all upload fields (PRD Appendices D–E). Layout persists per user (FR-R12); exports follow it (FR-R13).</div>';
+  }
+  function colToggle(k){
+    const i=visibleCols.indexOf(k);
+    if(i>-1){visibleCols.splice(i,1);sorts=sorts.filter(s=>s.k!==k);}
+    else visibleCols.push(k);
+    renderReport(); renderColPanel();
+  }
+  function colMove(k,dir){
+    const i=visibleCols.indexOf(k), j=i+dir;
+    if(j<1||j>=visibleCols.length) return; // 'No' stays first
+    [visibleCols[i],visibleCols[j]]=[visibleCols[j],visibleCols[i]];
+    renderReport(); renderColPanel();
+  }
+  function colReset(){visibleCols=[...DEFAULT_VISIBLE];sorts=[];renderReport();renderColPanel();}
+  function toggleColPanel(e){e.stopPropagation();document.getElementById('colpanel').classList.toggle('open');renderColPanel();}
+  document.addEventListener('click',()=>document.getElementById('colpanel').classList.remove('open'));
+  renderReport();
+</script>
+</body>
+</html>

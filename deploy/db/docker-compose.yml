@@ -1,0 +1,44 @@
+# BC Inventory — DB tier   ·   staging host 172.28.92.60
+# Published on 5443: 5432-5436, 5440 and 5442 are already taken on this host.
+name: bc-inventory-db
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: bc-inventory-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bcinventory
+      POSTGRES_USER: bcapp
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      # scram-sha-256 for remote connections from the backend server
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+      TZ: Asia/Jakarta
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - log_min_duration_statement=2000     # log anything slower than the 2 s SLO
+    ports:
+      # bind to the private interface only — never 0.0.0.0 for a database
+      - "172.28.92.60:5443:5432"
+    volumes:
+      - bcinv_pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bcapp -d bcinventory"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  bcinv_pgdata:
