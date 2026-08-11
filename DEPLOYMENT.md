@@ -41,11 +41,13 @@ it is the sole port users need. Do not "simplify" these to `0.0.0.0`.
 On each server:
 
 ```bash
-docker --version && docker compose version && df -h / && free -m
+docker --version && docker compose version && git --version && nc -zv github.com 22 && df -h / && free -m
 ```
 
-Docker Engine 20.10+ with the Compose v2 plugin is required. All three hosts already run
-Docker, so this is a confirmation step, not an install step.
+Docker Engine 20.10+ with the Compose v2 plugin, plus `git` and outbound SSH to GitHub. All
+three hosts already run Docker, so this is a confirmation step, not an install step. If `git`
+is missing: `apt-get update && apt-get install -y git`. If GitHub port 22 is unreachable, see
+§3.3 for the file-transfer fallback.
 
 ### Security-group rules (Alibaba Cloud ECS)
 
@@ -63,30 +65,79 @@ be reachable from the backend server.
 
 ---
 
-## 3. Transfer the code
+## 3. Get the code from GitHub
 
-From your Windows machine, in the project folder, build one archive:
+Source of truth: **`git@github.com:dwsitproject-hub/Inventory-Item.git`** (branch `main`).
+
+The repository is private, so each server needs its own **read-only deploy key**. Run §3.1 and
+§3.2 **once per server** — on all three (172.28.92.60, .57, .56).
+
+> **Why a key per server, generated on the server?** The private key is created on the machine
+> that uses it and never travels anywhere, so there is nothing to intercept. Each key is
+> read-only, so a compromised staging host can pull but can never push to your repository, and
+> you can revoke one host without disturbing the other two. Do **not** copy the key from your
+> Windows machine — that one has write access.
+
+### 3.1 Generate the server's deploy key
 
 ```bash
-tar --exclude=node_modules --exclude=.git --exclude=frontend/dist -czf bc-inventory.tar.gz backend frontend deploy docs README.md DEPLOYMENT.md
+ssh-keygen -t ed25519 -C "bc-inventory deploy $(hostname -I | awk '{print $1}')" -f ~/.ssh/id_ed25519_bcinv -N "" && cat ~/.ssh/id_ed25519_bcinv.pub
 ```
 
-Upload it to each server with `pscp` (ships with PuTTY) — or use WinSCP if you prefer a GUI:
+Copy the printed line. In GitHub open
+**https://github.com/dwsitproject-hub/Inventory-Item/settings/keys** → *Add deploy key*:
+
+* **Title** — name the host, e.g. `staging-db 172.28.92.60`
+* **Key** — paste the line
+* **Allow write access** — leave **unticked**. Deployment only ever reads.
+
+### 3.2 Configure SSH and clone
 
 ```bash
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+cat >> ~/.ssh/config <<'EOF'
+
+Host github-bcinv
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_bcinv
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config ~/.ssh/id_ed25519_bcinv
+ssh -T git@github-bcinv
+```
+
+The last command should answer `Hi dwsitproject-hub/Inventory-Item! You've successfully
+authenticated…`. If it says *permission denied*, the deploy key was not added (or was added to
+the wrong repository).
+
+Now clone:
+
+```bash
+git clone git@github-bcinv:dwsitproject-hub/Inventory-Item.git /opt/bc-inventory && cd /opt/bc-inventory && git log --oneline -1
+```
+
+Note the commit hash — that is what this host is running.
+
+> The DB server only needs `deploy/db`, but cloning the whole repository on all three keeps the
+> hosts identical and makes `git pull` the single upgrade procedure everywhere. The clone is
+> small: the sample customs extracts are deliberately **not** in the repository (they hold real
+> vendor names, NPWP tax IDs and transaction values), so `docs/` contains only the written
+> specifications.
+
+### 3.3 If the servers cannot reach GitHub
+
+Some hardened VPCs block outbound 22. Test with `nc -zv github.com 22`. If it fails, either
+allow outbound SSH to GitHub in the security group, or fall back to a one-off file transfer
+from your Windows machine:
+
+```bash
+tar --exclude=node_modules --exclude=.git --exclude=frontend/dist -czf bc-inventory.tar.gz backend frontend deploy README.md DEPLOYMENT.md
 pscp bc-inventory.tar.gz root@172.28.92.60:/opt/
-pscp bc-inventory.tar.gz root@172.28.92.57:/opt/
-pscp bc-inventory.tar.gz root@172.28.92.56:/opt/
 ```
 
-Then on **each** server:
-
-```bash
-mkdir -p /opt/bc-inventory && tar -xzf /opt/bc-inventory.tar.gz -C /opt/bc-inventory && ls /opt/bc-inventory
-```
-
-> The DB server only needs `deploy/db`, but unpacking the same archive everywhere keeps the
-> three hosts identical and makes upgrades a single repeatable procedure.
+…then `mkdir -p /opt/bc-inventory && tar -xzf /opt/bc-inventory.tar.gz -C /opt/bc-inventory`.
+With this fallback you lose `git pull` upgrades and must repeat the transfer each release.
 
 ---
 
@@ -258,26 +309,68 @@ Nightly at 01:30:
 docker exec -i bc-inventory-postgres pg_restore -U bcapp -d bcinventory --clean --if-exists /backups/bcinv_YYYYMMDD.dump
 ```
 
-### Upgrade to a new build
+### Upgrade to a new release
 
-Upload the new archive, then per tier (API shown; the same pattern applies to web):
+Back up first (§ Backup), then on the affected tier — one command:
 
 ```bash
-cd /opt/bc-inventory/deploy/backend && docker compose build && docker compose up -d && docker compose logs --tail 30 api
+/opt/bc-inventory/deploy/update.sh backend
 ```
 
-Schema changes apply automatically at API start — `Db.EnsureCreated` is idempotent DDL, and
-the seed only runs on an empty user table, so an upgrade never touches existing accounts or
-data. **Take a backup before upgrading anyway.**
+`update.sh` pulls `main`, prints the commit it moved to, rebuilds that tier and tails the log.
+Pass `db`, `backend` or `frontend`. Typically you upgrade **backend then frontend**; the DB tier
+only changes when its compose file does.
+
+Doing it by hand is the same three steps:
+
+```bash
+cd /opt/bc-inventory && git pull && cd deploy/backend && docker compose up -d --build && docker compose logs --tail 30 api
+```
+
+Schema changes apply automatically at API start — `Db.EnsureCreated` is idempotent DDL, and the
+seed only runs on an empty user table, so an upgrade never touches existing accounts or data.
+
+To see exactly what is deployed on a host:
+
+```bash
+cd /opt/bc-inventory && git log --oneline -1 && git status -sb | head -1
+```
+
+> `git pull` refuses to overwrite local edits. Config you are meant to change (`.env` files) is
+> gitignored and therefore safe. If you edited a tracked file in place, `git stash` it first —
+> and then move that change into the repository, or the next upgrade will drop it again.
+
+### Deploy a specific release rather than latest `main`
+
+For a controlled staging cut, tag the release from your Windows machine:
+
+```bash
+git tag -a staging-2026.08.11 -m "staging cut" && git push origin staging-2026.08.11
+```
+
+Then on each server:
+
+```bash
+cd /opt/bc-inventory && git fetch --tags && git checkout staging-2026.08.11 && cd deploy/backend && docker compose up -d --build
+```
 
 ### Rollback
 
-Images are tagged `:staging`. To roll back, re-deploy the previous source archive and rebuild.
-For a faster path, tag each release before upgrading:
+Check out the previous commit or tag and rebuild — the fastest, most reliable path:
 
 ```bash
-docker tag bc-inventory-api:staging bc-inventory-api:$(date +%Y%m%d)
+cd /opt/bc-inventory && git log --oneline -5
 ```
+
+```bash
+cd /opt/bc-inventory && git checkout <previous-commit-or-tag> && cd deploy/backend && docker compose up -d --build
+```
+
+Return to the tip later with `git checkout main && git pull`.
+
+**A code rollback does not undo a database migration.** The schema is additive (new tables and
+columns only, never drops), so an older build runs fine against a newer schema. If a release
+ever needs a destructive change, restore the pre-upgrade backup as well.
 
 ### Restarting a tier
 
@@ -301,6 +394,10 @@ require restarting nginx.
 | Blank page, console 404 on `/assets/…` | browser cached an old bundle | hard-refresh; `index.html` is served `no-store` so this self-corrects |
 | Upload rejected: "matches … equally" | look-alike template, name gives no hint | keep "Bahan Baku" / "Barang Jadi" / "Aset" / "Scraps" in the file or sheet name |
 | Everything 403 after a role change | permissions edited too tightly | a Super Admin can always reach *Administration → Role Management* to undo it |
+| `git clone`/`pull`: Permission denied (publickey) | deploy key not added, or added to the wrong repo | `ssh -T git@github-bcinv` — it must greet you with the repo name |
+| `git pull`: "local changes would be overwritten" | a tracked file was edited on the server | `git status`; move the change into the repo, or `git checkout -- <file>` to discard |
+| `update.sh`: "missing .env" | tier configured but never given its secrets | `cp .env.example .env && nano .env` in that tier's folder |
+| Hosts running different code | one server was never pulled | `git log --oneline -1` on each — all three should match |
 
 ### Full reset of staging data (destructive)
 
