@@ -14,7 +14,7 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
   const [offset, setOffset] = useState(0)
   const [rows, setRows] = useState<Record<string, unknown>[]>([])
   const [total, setTotal] = useState(0)
-  const [meta, setMeta] = useState<{ asOf?: string; sourceFile?: string; elapsedMs?: number }>({})
+  const [meta, setMeta] = useState<{ asOf?: string; elapsedMs?: number }>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [chooserOpen, setChooserOpen] = useState(false)
@@ -147,8 +147,7 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
         <div className="info">
           {loading ? <span><span className="spin" />loading…</span> : (
             <>Showing <b>{total === 0 ? 0 : offset + 1}–{Math.min(offset + pageSize, total)}</b> of <b>{total.toLocaleString()}{total > 100000 ? '+' : ''}</b> rows
-              · server-side · {meta.elapsedMs ?? '–'} ms
-              {meta.sourceFile && <> · source: {meta.sourceFile}</>}</>
+              · server-side · {meta.elapsedMs ?? '–'} ms</>
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

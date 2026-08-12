@@ -21,6 +21,8 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
     o.MultipartHeadersLengthLimit = 32 * 1024;
 });
 
+DapperTypes.Register();              // DateOnly/TimeOnly parameters (report date filters)
+
 var ds = NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Db")!);
 builder.Services.AddSingleton(ds);
 
