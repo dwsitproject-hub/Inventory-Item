@@ -33,9 +33,9 @@ app.UseAuthorization();
 
 // ---------- bootstrap: schema, seed, auto-ingest samples ----------
 await Db.EnsureCreated(ds);
-await Db.Seed(ds, app.Configuration);
+Audit.Configure(ds);                 // before Seed, so a startup password reset is audited
 Notifications.Configure(ds, app.Configuration);
-Audit.Configure(ds);
+await Db.Seed(ds, app.Configuration);
 Permissions.Configure(ds);
 await Permissions.EnsureSeeded(ds);
 _ = Task.Run(async () =>

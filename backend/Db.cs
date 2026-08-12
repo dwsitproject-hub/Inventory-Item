@@ -185,14 +185,57 @@ public static class Db
     /// never ships with the documented local-dev credentials; the seed only runs on an
     /// empty user table, so it can never overwrite real accounts.
     /// </summary>
+    private static readonly string[] Placeholders =
+        { "CHANGE_ME", "CHANGEME", "PASSWORD", "SECRET", "YOUR_PASSWORD", "XXXX", "TODO" };
+
+    /// <summary>
+    /// Refuses a placeholder or too-short seed password. Without this the container starts
+    /// happily and creates the admin with a literal value like "CHANGE_ME" — which then cannot
+    /// be corrected by editing .env, because seeding never runs again.
+    /// </summary>
+    private static void ValidateSeedPassword(string? pw, string envName)
+    {
+        if (string.IsNullOrWhiteSpace(pw)) return;            // unset → local-dev default
+        if (Placeholders.Contains(pw.Trim().ToUpperInvariant()) || pw.Trim().Length < 8)
+            throw new InvalidOperationException(
+                $"{envName} is still a placeholder or shorter than 8 characters. " +
+                "Set a real value in the tier's .env before first start — the seed runs only once, " +
+                "on an empty user table, so a bad value here cannot be fixed by editing .env later.");
+    }
+
     public static async Task Seed(NpgsqlDataSource ds, IConfiguration? cfg = null)
     {
         await using var con = await ds.OpenConnectionAsync();
-        var haveUsers = await con.ExecuteScalarAsync<int>("select count(*) from auth.users");
-        if (haveUsers > 0) return;
 
         var adminPw = cfg?["Seed:AdminPassword"];
         var sitePw = cfg?["Seed:SitePassword"];
+        ValidateSeedPassword(adminPw, "Seed__AdminPassword");
+        ValidateSeedPassword(sitePw, "Seed__SitePassword");
+
+        var haveUsers = await con.ExecuteScalarAsync<int>("select count(*) from auth.users");
+        if (haveUsers > 0)
+        {
+            // Rescue hatch for a locked-out environment: set Seed__ResetAdminPassword=true,
+            // restart once, then REMOVE it. Only ever touches the Super Admin account.
+            if (string.Equals(cfg?["Seed:ResetAdminPassword"], "true", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(adminPw))
+            {
+                var email = await con.ExecuteScalarAsync<string?>("""
+                    update auth.users set password_hash = @h, status = 'active'
+                    where id = (select id from auth.users where role = 'Super Admin' order by id limit 1)
+                    returning email
+                    """, new { h = BCrypt.Net.BCrypt.HashPassword(adminPw, 11) });
+                Console.WriteLine(email is null
+                    ? "[seed] ResetAdminPassword requested but no Super Admin account exists"
+                    : $"[seed] SUPER ADMIN PASSWORD RESET for {email} — remove Seed__ResetAdminPassword from .env now");
+                if (email is not null)
+                    Audit.Log("admin.user.reset", null, "user", email,
+                        "Super Admin password reset via Seed__ResetAdminPassword at startup",
+                        null, actorEmailOverride: "system@startup");
+            }
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(adminPw)) adminPw = "Admin123!";
         if (string.IsNullOrWhiteSpace(sitePw)) sitePw = "Bontang123!";
 
