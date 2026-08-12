@@ -350,6 +350,11 @@ git tag -a staging-2026.08.11 -m "staging cut" && git push origin staging-2026.0
 
 Then on each server:
 
+
+cd /opt/bc-inventory && git pull && ./deploy/update.sh backend && ./deploy/update.sh frontend
+
+
+
 ```bash
 cd /opt/bc-inventory && git fetch --tags && git checkout staging-2026.08.11 && cd deploy/backend && docker compose up -d --build
 ```
