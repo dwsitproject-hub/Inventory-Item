@@ -7,6 +7,20 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Upload ceiling enforced by the handler, with a friendly message (see /ingestions/upload).
+const long MaxUploadBytes = 100L * 1024 * 1024;
+// Transport limits sit deliberately ABOVE it: Kestrel defaults to 30,000,000 bytes, which is
+// smaller than a real BC 4.0 export (31.3 MB) and would reject it with an opaque 413 before
+// the handler ever sees the file.
+const long TransportLimitBytes = 120L * 1024 * 1024;
+
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = TransportLimitBytes);
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = TransportLimitBytes;
+    o.MultipartHeadersLengthLimit = 32 * 1024;
+});
+
 var ds = NpgsqlDataSource.Create(builder.Configuration.GetConnectionString("Db")!);
 builder.Services.AddSingleton(ds);
 
@@ -200,7 +214,9 @@ api.MapPost("/ingestions/upload", async (HttpRequest http, HttpContext ctx) =>
     var form = await http.ReadFormAsync();
     var file = form.Files.GetFile("file");
     if (file is null || file.Length == 0) return Results.Problem(statusCode: 400, title: "VAL-001", detail: "file is required.");
-    if (file.Length > 100 * 1024 * 1024) return Results.Problem(statusCode: 400, title: "VAL-001", detail: "file exceeds the 100 MB cap.");
+    if (file.Length > MaxUploadBytes)
+        return Results.Problem(statusCode: 400, title: "VAL-001",
+            detail: $"File is {file.Length / 1024.0 / 1024.0:N1} MB; the cap is {MaxUploadBytes / 1024 / 1024} MB.");
 
     using var ms = new MemoryStream();
     await file.CopyToAsync(ms);
