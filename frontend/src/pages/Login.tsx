@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { login } from '../api'
+import { landingPath, login } from '../api'
 
 export default function Login() {
   const [email, setEmail] = useState('admin@energi-up.com')
@@ -14,7 +14,9 @@ export default function Login() {
     setBusy(true); setError('')
     try {
       await login(email, password)
-      nav('/dashboard')
+      // login() has already fetched this user's permissions, so this resolves to a page
+      // they can actually open — Reports for roles without Dashboard access.
+      nav(landingPath(), { replace: true })
     } catch (err: any) {
       setError(err.message || 'Login failed')
     } finally {

@@ -101,8 +101,14 @@ public static class Permissions
             await using var con = await _ds.OpenConnectionAsync();
             var rows = await con.QueryAsync<(string role, string page, bool v, bool i, bool e)>(
                 "select role, page, can_view, can_insert, can_edit from auth.role_permissions");
-            _cache.Clear();
-            foreach (var r in rows) _cache[r.role + "|" + r.page] = new PagePermission(r.page, r.v, r.i, r.e);
+            // Fill first, then publish. Clearing in place would let a concurrent reader observe
+            // an empty cache and conclude "no permissions" — which is indistinguishable from a
+            // real denial.
+            var fresh = rows.ToDictionary(r => r.role + "|" + r.page,
+                                          r => new PagePermission(r.page, r.v, r.i, r.e));
+            foreach (var kv in fresh) _cache[kv.Key] = kv.Value;
+            foreach (var key in _cache.Keys.Where(k => !fresh.ContainsKey(k)).ToList())
+                _cache.TryRemove(key, out _);
             _loadedAt = DateTime.UtcNow;
         }
         finally { _lock.Release(); }
@@ -145,7 +151,15 @@ public static class Permissions
     public static async Task<IResult> List(NpgsqlDataSource ds, UserScope scope)
     {
         if (await Require(scope, "admin", "view") is { } err) return err;
-        await Load();
+
+        // Read straight from the database, never the cache. The admin screen sends this matrix
+        // back on save, so serving a momentarily-stale or half-loaded cache here would let a
+        // save silently strip every permission it did not know about.
+        await using var con = await ds.OpenConnectionAsync();
+        var stored = (await con.QueryAsync<(string role, string page, bool v, bool i, bool e)>(
+                "select role, page, can_view, can_insert, can_edit from auth.role_permissions"))
+            .ToDictionary(r => r.role + "|" + r.page, r => new PagePermission(r.page, r.v, r.i, r.e));
+
         var matrix = Roles.Select(role => new
         {
             role,
@@ -154,7 +168,7 @@ public static class Permissions
             {
                 var perm = role == SuperAdmin
                     ? new PagePermission(p.Key, true, true, true)
-                    : _cache.GetValueOrDefault(role + "|" + p.Key, new PagePermission(p.Key, false, false, false));
+                    : stored.GetValueOrDefault(role + "|" + p.Key, new PagePermission(p.Key, false, false, false));
                 return new { page = p.Key, perm.View, perm.Insert, perm.Edit };
             })
         });

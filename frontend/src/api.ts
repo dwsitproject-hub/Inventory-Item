@@ -43,6 +43,27 @@ export function setPermissions(p: PermissionMap) {
   sessionStorage.setItem('bc.perms', JSON.stringify(p))
 }
 
+/** Route for each governed page, in the order we would rather land a user on. */
+const LANDING_ORDER: [string, string][] = [
+  ['dashboard', '/dashboard'],
+  ['reports', '/reports'],
+  ['movement', '/movement'],
+  ['lpm', '/lpm'],
+  ['ingestion', '/ingestion'],
+  ['audit', '/audit'],
+  ['admin', '/admin'],
+]
+
+/**
+ * Where to send a user with no particular destination — after login, or from an unknown URL.
+ * Roles without Dashboard access land on Reports instead of an "access denied" panel; if that
+ * is closed to them too, the first page they can actually open wins.
+ */
+export function landingPath(): string {
+  const hit = LANDING_ORDER.find(([page]) => can(page))
+  return hit ? hit[1] : '/reports'   // nothing permitted: Reports explains the situation
+}
+
 export function getToken(): string | null { return sessionStorage.getItem('bc.token') }
 export function getUser(): User | null {
   const raw = sessionStorage.getItem('bc.user')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { can, clearSession, getToken, getUser, hasPermissions, me, setPermissions } from './api'
+import { can, clearSession, getToken, getUser, hasPermissions, landingPath, me, setPermissions } from './api'
 import Bell from './components/Bell'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -64,10 +64,15 @@ function Protected({ children, page }: { children: React.ReactNode; page?: strin
         <h1 className="page">Access denied</h1>
         <div className="crumb">Your role does not have access to this page</div>
         <div className="panel">
-          <div className="err" style={{ marginBottom: 0 }}>
+          <div className="err">
             Your role (<b>{getUser()!.role}</b>) is not permitted to view this page.
             An administrator can grant access under <b>Administration → Role Management</b>.
           </div>
+          {landingPath() !== loc.pathname && (
+            <a className="btn p" style={{ display: 'inline-block', textDecoration: 'none' }} href={landingPath()}>
+              Go to my start page
+            </a>
+          )}
         </div>
       </Layout>
     )
@@ -100,7 +105,7 @@ export default function App() {
       <Route path="/lpm" element={<Protected page="lpm"><Lpm /></Protected>} />
       <Route path="/admin" element={<Protected page="admin"><Admin /></Protected>} />
       <Route path="/audit" element={<Protected page="audit"><Audit /></Protected>} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to={getToken() ? landingPath() : '/login'} replace />} />
     </Routes>
   )
 }
