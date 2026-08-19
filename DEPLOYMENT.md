@@ -9,7 +9,8 @@ server named in each section heading.
 ## 1. Topology & port allocation
 
 ```
-   Browser  ──http──▶  FE 172.28.92.56 : 8088   (nginx + React SPA)
+   Browser  ──http──▶  test-it-inventory.kpndomain.com
+                       └─▶ FE 172.28.92.56 : 80   (nginx + React SPA)
                               │  proxies /api/
                               ▼
                        BE 172.28.92.57 : 8085   (ASP.NET Core API)
@@ -24,15 +25,15 @@ Ports were chosen against what is **already running** on each host (`docker ps`,
 |---|---|---|
 | DB 172.28.92.60 | 5432 jps-db · 5433 cloud-agent · 5434 overtime · 5435 downstream-hub · 5436 pct · 5440 project-mgmt · 5442 klip | **5443** |
 | BE 172.28.92.57 | 3000 jps-api · 3001 slms · 3003 eos · 4000 downstream-hub · 4100 pct · 5000 overtime · 5001 klip · 5002 crc · 5050 cloud-agent · 5422 eos-pg · 5442 klip-pg · 5544 slms-pg · 13000 project-mgmt | **8085** |
-| FE 172.28.92.56 | 3000 slms · 3001 klip · 3020 eos · 3030 project-mgmt · 3042 overtime · 3050 pct · 3080 jps · 3090 msd · 3100 downstream-hub · 5432 klip-pg · 8010 crc | **8088** |
+| FE 172.28.92.56 | 3000 slms · 3001 klip · 3020 eos · 3030 project-mgmt · 3042 overtime · 3050 pct · 3080 jps · 3090 msd · 3100 downstream-hub · 5432 klip-pg · 8010 crc | **80** (or 8088) |
 
 > Re-check with `docker ps --format '{{.Names}}\t{{.Ports}}'` before you start — if any of
-> 5443 / 8085 / 8088 has been claimed since, change it in that tier's `docker-compose.yml`
+> 5443 / 8085 / 80 has been claimed since, change it in that tier's `docker-compose.yml`
 > **and** in `deploy/frontend/nginx.staging.conf` (which hard-codes the API address).
 
 **Binding is deliberate.** The database binds to `172.28.92.60` and the API to `172.28.92.57`
-— the private interface only, never `0.0.0.0`. Only the web tier binds `0.0.0.0:8088`, because
-it is the sole port users need. Do not "simplify" these to `0.0.0.0`.
+— the private interface only, never `0.0.0.0`. Only the web tier binds `0.0.0.0`, because it is
+the sole port users need. Do not "simplify" the other two to `0.0.0.0`.
 
 ---
 
@@ -49,6 +50,53 @@ three hosts already run Docker, so this is a confirmation step, not an install s
 is missing: `apt-get update && apt-get install -y git`. If GitHub port 22 is unreachable, see
 §3.3 for the file-transfer fallback.
 
+### Hostname and DNS
+
+Staging is served as **http://test-it-inventory.kpndomain.com**, which nginx already answers to
+(`server_name` in `deploy/frontend/nginx.staging.conf`). Two things have to line up outside the
+app:
+
+**1. A DNS record.** `172.28.92.56` is a *private* address, so where the record points depends on
+how your users reach staging:
+
+| Situation | Record |
+|---|---|
+| Users are on the corporate network or VPN | **A** record on the internal DNS → `172.28.92.56` |
+| Users come in over the internet | **A** record on public DNS → the public IP of the SLB / EIP that forwards to `172.28.92.56:80` |
+
+Do not publish a public record straight to a private IP — it will resolve and then time out.
+Confirm resolution from a client machine before telling anyone the URL:
+
+```bash
+nslookup test-it-inventory.kpndomain.com
+```
+
+**2. Port 80 on the FE server.** A hostname with no port suffix means the web tier must listen on
+80 rather than 8088. Check the port is free, then switch it:
+
+```bash
+ss -lntp | grep ':80 ' || echo "port 80 is free"
+```
+
+```bash
+cd /opt/bc-inventory/deploy/frontend && cp -n .env.example .env && grep WEB_PORT .env
+```
+
+`.env` ships with `WEB_PORT=80`. Leave it at `8088` if something else already owns port 80 on
+that host — the hostname then needs the suffix, `http://test-it-inventory.kpndomain.com:8088`.
+The container refuses to start if the port is taken, so verify first.
+
+**3. HTTPS before real use.** The PRD requires TLS everywhere and JWTs travel in the
+`Authorization` header, so the hostname should not carry real customs data over plain HTTP for
+long. The cleanest option is to terminate TLS on the corporate load balancer and keep forwarding
+plain HTTP to this container — no container change at all. To terminate on the FE host instead,
+`nginx.staging.conf` ends with a ready-to-uncomment `listen 443 ssl` block and the redirect it
+needs.
+
+> No application change is required for the domain. The API is reached through nginx on the same
+> origin (`/api/...`), so there is no CORS or cookie-domain involvement — the SPA never learns
+> what hostname it was served from.
+
 ### Security-group rules (Alibaba Cloud ECS)
 
 Add these in the ECS console — the app will not work without them, and each rule is
@@ -58,7 +106,8 @@ deliberately narrow:
 |---|---|---|---|
 | Inbound on **DB** 172.28.92.60 | 5443/tcp | `172.28.92.57/32` | API → PostgreSQL |
 | Inbound on **BE** 172.28.92.57 | 8085/tcp | `172.28.92.56/32` | nginx → API |
-| Inbound on **FE** 172.28.92.56 | 8088/tcp | your office / VPN CIDR | users → app |
+| Inbound on **FE** 172.28.92.56 | 80/tcp (and 8088 while both are in use) | your office / VPN CIDR | users → app |
+| Inbound on **FE** 172.28.92.56 | 443/tcp | your office / VPN CIDR | only if TLS is terminated on this host |
 
 Do **not** open 5443 or 8085 to `0.0.0.0/0`. The database port in particular should only ever
 be reachable from the backend server.
@@ -222,7 +271,7 @@ Confirm the API address in the nginx config matches §1 (change it here if you m
 grep proxy_pass /opt/bc-inventory/deploy/frontend/nginx.staging.conf
 ```
 
-Check reachability, then build and start:
+Set the host port (see §2 — `.env` ships with `WEB_PORT=80`), check reachability, then build:
 
 ```bash
 nc -zv 172.28.92.57 8085
@@ -232,7 +281,8 @@ cd /opt/bc-inventory/deploy/frontend && docker compose up -d --build && sleep 20
 Verify nginx serves the SPA and proxies the API correctly from this host:
 
 ```bash
-curl -s -o /dev/null -w 'spa %{http_code}\n' http://172.28.92.56:8088/ && curl -s http://172.28.92.56:8088/api/v1/health
+BASE=http://test-it-inventory.kpndomain.com   # or http://172.28.92.56:8088 if DNS is not live yet
+curl -s -o /dev/null -w 'spa %{http_code}\n' $BASE/ && curl -s $BASE/api/v1/health
 ```
 
 Expected: `spa 200` and `{"status":"ok","db":true}`. If the SPA returns 200 but the API call
@@ -242,7 +292,7 @@ fails, the problem is between FE and BE (security group or `proxy_pass`), not th
 
 ## 7. Smoke test
 
-Open **http://172.28.92.56:8088** and sign in as `admin@energi-up.com` with your
+Open **http://test-it-inventory.kpndomain.com** (or `http://172.28.92.56:8088`) and sign in as `admin@energi-up.com` with your
 `SEED_ADMIN_PASSWORD`. Then check, in order:
 
 1. **Dashboard** loads (zeros are correct — staging starts empty unless you mounted `docs`)
@@ -255,7 +305,8 @@ Open **http://172.28.92.56:8088** and sign in as `admin@energi-up.com` with your
 From the command line:
 
 ```bash
-TOKEN=$(curl -s -X POST http://172.28.92.56:8088/api/v1/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@energi-up.com","password":"YOUR_SEED_ADMIN_PASSWORD"}' | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p') && curl -s http://172.28.92.56:8088/api/v1/reports -H "Authorization: Bearer $TOKEN" | head -c 200
+BASE=http://test-it-inventory.kpndomain.com
+TOKEN=$(curl -s -X POST $BASE/api/v1/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@energi-up.com","password":"YOUR_SEED_ADMIN_PASSWORD"}' | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p') && curl -s $BASE/api/v1/reports -H "Authorization: Bearer $TOKEN" | head -c 200
 ```
 
 ---
@@ -269,7 +320,8 @@ Do these on the first day, not "later":
    `bc.bontang@energi-up.com` if it is not a real person. Accounts are never hard-deleted, so
    disabling preserves the audit trail.
 2. **Review Role Management** against how your team actually works. Defaults follow PRD §6.4.
-3. **Restrict 8088** in the security group to your office/VPN range. Staging holds real
+3. **Restrict the web port** (80/8088) in the security group to your office/VPN range, and put
+   TLS in front of the hostname (see §2). Staging holds real
    customs data.
 4. **Schedule backups** (§9) and confirm a restore works *before* anyone relies on the data.
 5. **Keep `.env` files out of shared folders** — they hold the DB password and JWT key.
