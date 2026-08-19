@@ -9,8 +9,9 @@ server named in each section heading.
 ## 1. Topology & port allocation
 
 ```
-   Browser  ──http──▶  test-it-inventory.kpndomain.com
-                       └─▶ FE 172.28.92.56 : 80   (nginx + React SPA)
+   Browser ─http─▶ test-it-inventory.kpndomain.com
+                   └─▶ FE 172.28.92.56 :80  host nginx (already serves other apps)
+                          └─▶ :8088  bc-inventory-web (nginx + React SPA)
                               │  proxies /api/
                               ▼
                        BE 172.28.92.57 : 8085   (ASP.NET Core API)
@@ -25,10 +26,10 @@ Ports were chosen against what is **already running** on each host (`docker ps`,
 |---|---|---|
 | DB 172.28.92.60 | 5432 jps-db · 5433 cloud-agent · 5434 overtime · 5435 downstream-hub · 5436 pct · 5440 project-mgmt · 5442 klip | **5443** |
 | BE 172.28.92.57 | 3000 jps-api · 3001 slms · 3003 eos · 4000 downstream-hub · 4100 pct · 5000 overtime · 5001 klip · 5002 crc · 5050 cloud-agent · 5422 eos-pg · 5442 klip-pg · 5544 slms-pg · 13000 project-mgmt | **8085** |
-| FE 172.28.92.56 | 3000 slms · 3001 klip · 3020 eos · 3030 project-mgmt · 3042 overtime · 3050 pct · 3080 jps · 3090 msd · 3100 downstream-hub · 5432 klip-pg · 8010 crc | **80** (or 8088) |
+| FE 172.28.92.56 | **80 = the host's own nginx** · 3000 slms · 3001 klip · 3020 eos · 3030 project-mgmt · 3042 overtime · 3050 pct · 3080 jps · 3090 msd · 3100 downstream-hub · 5432 klip-pg · 8010 crc | **8088**, fronted on 80 by the host nginx |
 
 > Re-check with `docker ps --format '{{.Names}}\t{{.Ports}}'` before you start — if any of
-> 5443 / 8085 / 80 has been claimed since, change it in that tier's `docker-compose.yml`
+> 5443 / 8085 / 8088 has been claimed since, change it in that tier's `docker-compose.yml`
 > **and** in `deploy/frontend/nginx.staging.conf` (which hard-codes the API address).
 
 **Binding is deliberate.** The database binds to `172.28.92.60` and the API to `172.28.92.57`
@@ -52,12 +53,46 @@ is missing: `apt-get update && apt-get install -y git`. If GitHub port 22 is unr
 
 ### Hostname and DNS
 
-Staging is served as **http://test-it-inventory.kpndomain.com**, which nginx already answers to
-(`server_name` in `deploy/frontend/nginx.staging.conf`). Two things have to line up outside the
-app:
+Staging is served as **http://test-it-inventory.kpndomain.com** over plain HTTP (no TLS for
+staging, by decision).
 
-**1. A DNS record.** `172.28.92.56` is a *private* address, so where the record points depends on
-how your users reach staging:
+**Port 80 on 172.28.92.56 already belongs to the host's own nginx**, which fronts the other
+applications on that server by hostname:
+
+```bash
+ss -lntp | grep ':80 '
+```
+
+So BC Inventory is added as one more virtual host on that nginx rather than taking the port —
+trying to take it would stop the other apps. The chain is:
+
+```
+  browser ─▶ host nginx :80  (test-it-inventory.kpndomain.com)
+                  └─▶ bc-inventory-web container :8088
+                          └─▶ API 172.28.92.57:8085
+```
+
+**1. Install the vhost** on the FE server:
+
+```bash
+cp /opt/bc-inventory/deploy/frontend/host-nginx-vhost.conf /etc/nginx/conf.d/test-it-inventory.conf && nginx -t && systemctl reload nginx
+```
+
+If this server uses the `sites-available` layout instead, put it there and symlink:
+
+```bash
+cp /opt/bc-inventory/deploy/frontend/host-nginx-vhost.conf /etc/nginx/sites-available/test-it-inventory && ln -sf /etc/nginx/sites-available/test-it-inventory /etc/nginx/sites-enabled/ && nginx -t && systemctl reload nginx
+```
+
+`nginx -t` before reloading is what keeps a typo from taking every other app on the box down.
+
+> **The vhost sets `client_max_body_size 110m` for a reason.** nginx defaults to **1m**, and the
+> host nginx is now the outermost hop, so leaving it at the default would reject a real 31 MB
+> BC 4.0 extract with a bare 413 — before the request reaches the app that has a readable error
+> for it. It also raises `proxy_read_timeout`, because parsing that file takes seconds.
+
+**2. The DNS record.** `172.28.92.56` is a *private* address, so where the record points depends
+on how users reach staging:
 
 | Situation | Record |
 |---|---|
@@ -65,37 +100,19 @@ how your users reach staging:
 | Users come in over the internet | **A** record on public DNS → the public IP of the SLB / EIP that forwards to `172.28.92.56:80` |
 
 Do not publish a public record straight to a private IP — it will resolve and then time out.
-Confirm resolution from a client machine before telling anyone the URL:
+Check from a client machine before sharing the URL:
 
 ```bash
 nslookup test-it-inventory.kpndomain.com
 ```
 
-**2. Port 80 on the FE server.** A hostname with no port suffix means the web tier must listen on
-80 rather than 8088. Check the port is free, then switch it:
+**3. Optionally close direct access.** While testing, the container also answers on
+`http://172.28.92.56:8088`. Once the vhost works, set `WEB_BIND=127.0.0.1` in
+`deploy/frontend/.env` and redeploy the web tier — the container is then reachable only through
+the host nginx, and the 8088 security-group rule can be removed.
 
-```bash
-ss -lntp | grep ':80 ' || echo "port 80 is free"
-```
-
-```bash
-cd /opt/bc-inventory/deploy/frontend && cp -n .env.example .env && grep WEB_PORT .env
-```
-
-`.env` ships with `WEB_PORT=80`. Leave it at `8088` if something else already owns port 80 on
-that host — the hostname then needs the suffix, `http://test-it-inventory.kpndomain.com:8088`.
-The container refuses to start if the port is taken, so verify first.
-
-**3. HTTPS before real use.** The PRD requires TLS everywhere and JWTs travel in the
-`Authorization` header, so the hostname should not carry real customs data over plain HTTP for
-long. The cleanest option is to terminate TLS on the corporate load balancer and keep forwarding
-plain HTTP to this container — no container change at all. To terminate on the FE host instead,
-`nginx.staging.conf` ends with a ready-to-uncomment `listen 443 ssl` block and the redirect it
-needs.
-
-> No application change is required for the domain. The API is reached through nginx on the same
-> origin (`/api/...`), so there is no CORS or cookie-domain involvement — the SPA never learns
-> what hostname it was served from.
+> No application change is needed for the domain. The SPA calls `/api` on whatever origin served
+> it, so there is no CORS or cookie-domain involvement.
 
 ### Security-group rules (Alibaba Cloud ECS)
 
@@ -106,8 +123,8 @@ deliberately narrow:
 |---|---|---|---|
 | Inbound on **DB** 172.28.92.60 | 5443/tcp | `172.28.92.57/32` | API → PostgreSQL |
 | Inbound on **BE** 172.28.92.57 | 8085/tcp | `172.28.92.56/32` | nginx → API |
-| Inbound on **FE** 172.28.92.56 | 80/tcp (and 8088 while both are in use) | your office / VPN CIDR | users → app |
-| Inbound on **FE** 172.28.92.56 | 443/tcp | your office / VPN CIDR | only if TLS is terminated on this host |
+| Inbound on **FE** 172.28.92.56 | 80/tcp | your office / VPN CIDR | users → host nginx → app |
+| Inbound on **FE** 172.28.92.56 | 8088/tcp | your office / VPN CIDR | optional: direct access while testing; drop it once `WEB_BIND=127.0.0.1` |
 
 Do **not** open 5443 or 8085 to `0.0.0.0/0`. The database port in particular should only ever
 be reachable from the backend server.
@@ -271,7 +288,7 @@ Confirm the API address in the nginx config matches §1 (change it here if you m
 grep proxy_pass /opt/bc-inventory/deploy/frontend/nginx.staging.conf
 ```
 
-Set the host port (see §2 — `.env` ships with `WEB_PORT=80`), check reachability, then build:
+Create `.env` (see §2 — keep `WEB_PORT=8088`), check reachability, then build:
 
 ```bash
 nc -zv 172.28.92.57 8085
@@ -320,8 +337,8 @@ Do these on the first day, not "later":
    `bc.bontang@energi-up.com` if it is not a real person. Accounts are never hard-deleted, so
    disabling preserves the audit trail.
 2. **Review Role Management** against how your team actually works. Defaults follow PRD §6.4.
-3. **Restrict the web port** (80/8088) in the security group to your office/VPN range, and put
-   TLS in front of the hostname (see §2). Staging holds real
+3. **Restrict port 80** in the security group to your office/VPN range, and set
+   `WEB_BIND=127.0.0.1` to close direct container access (see §2). Staging holds real
    customs data.
 4. **Schedule backups** (§9) and confirm a restore works *before* anyone relies on the data.
 5. **Keep `.env` files out of shared folders** — they hold the DB password and JWT key.
