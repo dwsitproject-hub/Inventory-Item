@@ -275,8 +275,9 @@ public static class Ingestion
                 docType = Str(line, "Tipe PIB");
                 docDateIso = StrOrNull(line, "PibDate");
             }
-            else if (template == "BC30")
+            else if (template is "BC30" or "BC27IN" or "BC27OUT" or "BC25" or "BC41")
             {
+                // Customs-document reports that all carry the same identity columns.
                 aju = "";
                 docNo = Str(line, "Dok. Pabean / Nomor");
                 docType = Str(line, "Jenis Dok.");
@@ -330,7 +331,8 @@ public static class Ingestion
                     {
                         "BC23" => StrOrNull(line, "Supplier Name"),
                         "BC40" => StrOrNull(line, "Vendor Name"),
-                        "BC30" => StrOrNull(line, "Penerima / Pembeli"),
+                        "BC30" or "BC27OUT" or "BC25" or "BC41" => StrOrNull(line, "Penerima / Pembeli"),
+                        "BC27IN" => StrOrNull(line, "Pemasok/Pengirim"),
                         _ => null                       // stock reports have no counterparty
                     },
                     fileId
@@ -404,7 +406,9 @@ public static class Ingestion
             "BC23 Report.xls", "BC40 Report.xls",
             "Laporan BC3.0.xlsx", "Laporan WIP.xlsx",
             "Laporan Bahan Baku.xlsx", "Laporan Barang Jadi.xlsx", "Laporan Aset dan Sparepart.xlsx",
-            "Laporan Scraps  Pusat Logistik Berikat PERIODE 01.01.2019 SD 11.08.2026.xlsx"
+            "Laporan Scraps  Pusat Logistik Berikat PERIODE 01.01.2019 SD 11.08.2026.xlsx",
+            "Laporan BC 2.7 In.xlsx", "Laporan BC 2.7 Out.xlsx",
+            "Laporan BC 2.5 Out.xlsx", "Laporan BC 4.1 Out.xlsx"
         };
         foreach (var name in samples)
         {

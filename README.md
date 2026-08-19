@@ -30,11 +30,16 @@ parser pipeline, so every screen is populated immediately.
 | BARANGJADI | Laporan Barang Jadi.xlsx | XLSX | Inventory Movement |
 | ASET | Laporan Aset dan Sparepart.xlsx | XLSX | Inventory Movement |
 | SCRAP | Laporan Scraps ….xlsx | XLSX | Inventory Movement |
+| BC27IN | Laporan BC 2.7 In.xlsx | XLSX | Reports |
+| BC27OUT | Laporan BC 2.7 Out.xlsx | XLSX | Reports |
+| BC25 | Laporan BC 2.5 Out.xlsx | XLSX | Reports |
+| BC41 | Laporan BC 4.1 Out.xlsx | XLSX | Reports |
 
-Templates are identified from the file's own header row, not its name or extension. Two pairs
-share a byte-identical layout — Bahan Baku / Barang Jadi (14 columns) and Aset dan Sparepart /
-Scraps (12 columns) — so those fall back to the sheet name, file name or title row; when none
-of them names the report the upload is rejected with an explanation rather than guessed at. The Ingestion page lists every supported template with its expected
+Templates are identified from the file's own header row, not its name or extension. Several groups
+share a byte-identical layout — Bahan Baku / Barang Jadi (14 columns), Aset dan Sparepart /
+Scraps (12 columns), and BC 2.7 Out / BC 2.5 Out / BC 4.1 Out (19 columns) — so those fall back
+to the sheet name, file name or title row; when none of them names the report the upload is
+rejected with an explanation rather than guessed at. The Ingestion page lists every supported template with its expected
 columns and how many rows are loaded, and offers a **blank .xlsx template** per report
 (`⭳ .xlsx`) for users to fill in and upload back. Each template ships with a "Petunjuk" sheet
 documenting every column; columns are matched by header text, so they may be reordered.

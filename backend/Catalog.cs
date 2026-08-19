@@ -266,6 +266,77 @@ public static class Catalog
     private static readonly string[] Bc30Search =
         { "Dok. Pabean / Nomor", "Bukti Penerimaan / Nomor", "Dokumen / Nomor", "Penerima / Pembeli", "Kode Barang", "Nama Barang" };
 
+    // ---------- Laporan BC 2.7 In (pemasukan antar-TPB) ----------
+    public static readonly Field[] Bc27In =
+    {
+        new("Jenis Dok.", FieldType.Text, "Document", "Jenis BC"),
+        new("Dok. Pabean / Nomor", FieldType.Text, "Dok. Pabean", "NoPen"),
+        new("Dok. Pabean / Tanggal", FieldType.Date, "Dok. Pabean", "Tanggal Nopen"),
+        new("Bukti Penerimaan / Nomor", FieldType.Text, "Bukti Penerimaan"),
+        new("Bukti Penerimaan / Tanggal", FieldType.Date, "Bukti Penerimaan"),
+        new("Bukti Penerimaan / Tgl buka", FieldType.Date, "Bukti Penerimaan"),
+        new("Dokumen / Nomor", FieldType.Text, "Dokumen"),
+        new("Dokumen / Tanggal", FieldType.Date, "Dokumen"),
+        new("Pemasok/Pengirim", FieldType.Text, "Counterparty", "Pengirim"),
+        new("Kode Barang", FieldType.Text, "Item"),
+        new("Nama Barang", FieldType.Text, "Item"),
+        new("Overdeliver Tolerance %", FieldType.Number, "Tolerance"),
+        new("Underdeliver Tolerance %", FieldType.Number, "Tolerance"),
+        new("HS Code", FieldType.Text, "Item"),
+        new("Terms", FieldType.Text, "Commercial"),
+        new("Sat", FieldType.Text, "Item", "Satuan"),
+        new("BC Qty", FieldType.Number, "Item"),
+        new("Jumlah", FieldType.Number, "Item"),
+        new("Balance Qty", FieldType.Number, "Item"),
+        new("Nilai Barang / Mata Uang", FieldType.Text, "Nilai Barang", "Valuta"),
+        new("Nilai Barang / Nilai", FieldType.Number, "Nilai Barang", "Nilai"),
+        new("Nilai Barang / Freight Cost", FieldType.Number, "Nilai Barang", "Nilai Freight"),
+        new("Nilai Barang / Nilai Tot. Barang", FieldType.Number, "Nilai Barang", "Nilai Total"),
+    };
+
+    // ---------- Laporan BC 2.7 Out / BC 2.5 Out / BC 4.1 Out ----------
+    // One layout shared by all three outbound reports — byte-identical headers, so only the
+    // sheet/file name tells them apart (see NameHints below).
+    public static readonly Field[] BcOut =
+    {
+        new("Jenis Dok.", FieldType.Text, "Document", "Jenis BC"),
+        new("Dok. Pabean / Nomor", FieldType.Text, "Dok. Pabean", "NoPen"),
+        new("Dok. Pabean / Tanggal", FieldType.Date, "Dok. Pabean", "Tanggal Nopen"),
+        new("Bukti Pengeluaran / Nomor", FieldType.Text, "Bukti Pengeluaran"),
+        new("Bukti Pengeluaran / Tanggal", FieldType.Date, "Bukti Pengeluaran"),
+        new("Bukti Pengeluaran / Tgl buka", FieldType.Date, "Bukti Pengeluaran"),
+        new("Dokumen / Nomor", FieldType.Text, "Dokumen"),
+        new("Dokumen / Tanggal", FieldType.Date, "Dokumen"),
+        new("Penerima / Pembeli", FieldType.Text, "Counterparty", "Penerima"),
+        new("Kode Barang", FieldType.Text, "Item"),
+        new("Nama Barang", FieldType.Text, "Item"),
+        new("Terms", FieldType.Text, "Commercial"),
+        new("Sat", FieldType.Text, "Item", "Satuan"),
+        new("Jumlah", FieldType.Number, "Item"),
+        new("Nilai Barang / Mata Uang", FieldType.Text, "Nilai Barang", "Valuta"),
+        new("Nilai Barang / Nilai", FieldType.Number, "Nilai Barang", "Nilai"),
+        new("Freight/Delivery Cost", FieldType.Number, "Nilai Barang", "Nilai Freight"),
+        new("Insurance", FieldType.Number, "Nilai Barang", "Nilai Asuransi"),
+    };
+
+    public static readonly string[] Bc27InDefaults =
+    {
+        "Jenis Dok.", "Dok. Pabean / Nomor", "Dok. Pabean / Tanggal", "Pemasok/Pengirim",
+        "Kode Barang", "Nama Barang", "HS Code", "Sat", "BC Qty", "Jumlah", "Balance Qty",
+        "Nilai Barang / Mata Uang", "Nilai Barang / Nilai"
+    };
+    public static readonly string[] BcOutDefaults =
+    {
+        "Jenis Dok.", "Dok. Pabean / Nomor", "Dok. Pabean / Tanggal", "Penerima / Pembeli",
+        "Kode Barang", "Nama Barang", "Terms", "Sat", "Jumlah",
+        "Nilai Barang / Mata Uang", "Nilai Barang / Nilai", "Freight/Delivery Cost", "Insurance"
+    };
+
+    private static readonly string[] Bc27InSearch =
+        { "Dok. Pabean / Nomor", "Bukti Penerimaan / Nomor", "Dokumen / Nomor", "Pemasok/Pengirim", "Kode Barang", "Nama Barang", "HS Code" };
+    private static readonly string[] BcOutSearch =
+        { "Dok. Pabean / Nomor", "Bukti Pengeluaran / Nomor", "Dokumen / Nomor", "Penerima / Pembeli", "Kode Barang", "Nama Barang" };
+
     /// <summary>
     /// Page = which screen hosts the report: "reports" (customs documents) or "movement".
     /// NameHints disambiguate templates whose column headers are identical — the only signal
@@ -278,7 +349,17 @@ public static class Catalog
     {
         new("pib-import", "Pemasukan Barang — PIB Import (BC 2.3)", "BC23", Pib, PibDefaults, PibSearch),
         new("bc40-receipt", "Pemasukan Barang — BC 4.0", "BC40", Bc40, Bc40Defaults, Bc40Search),
-        new("bc30-export", "Pengeluaran Barang — BC 3.0 (PEB)", "BC30", Bc30, Bc30Defaults, Bc30Search),
+        new("bc30-export", "Pengeluaran Barang — BC 3.0 (PEB)", "BC30", Bc30, Bc30Defaults, Bc30Search,
+            "reports", new[] { "BC 3.0", "BC30" }),
+        new("bc27-in", "Pemasukan Barang — BC 2.7", "BC27IN", Bc27In, Bc27InDefaults, Bc27InSearch,
+            "reports", new[] { "BC 2.7", "27IN" }),
+        // These three share one layout; the hint is the only thing that separates them.
+        new("bc27-out", "Pengeluaran Barang — BC 2.7", "BC27OUT", BcOut, BcOutDefaults, BcOutSearch,
+            "reports", new[] { "BC 2.7", "27OUT" }),
+        new("bc25-out", "Pengeluaran Barang — BC 2.5", "BC25", BcOut, BcOutDefaults, BcOutSearch,
+            "reports", new[] { "BC 2.5", "BC25" }),
+        new("bc41-out", "Pengeluaran Barang — BC 4.1", "BC41", BcOut, BcOutDefaults, BcOutSearch,
+            "reports", new[] { "BC 4.1", "BC41" }),
         new("wip", "Laporan WIP", "WIP", Wip, WipDefaults, StockSearch, "movement",
             new[] { "WIP" }),
         new("bahan-baku", "Laporan Bahan Baku", "BAHANBAKU", Mutasi, MutasiDefaults, StockSearch, "movement",
