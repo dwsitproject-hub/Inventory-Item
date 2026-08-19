@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReportMeta, SavedView, SortSpec, can, deleteView, exportReport, listViews, queryReport, saveView } from '../api'
-import { fmtInt, fmtNum } from '../format'
+import { fmtDate, fmtInt, fmtNum } from '../format'
 
 /**
  * Server-side report grid (FR-R4, FR-R9..R13).
@@ -133,7 +133,7 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
     if (v == null) return ''
     const f = fieldsByName.get(name)
     if (f?.type === 'number') return fmtNum(v as number | string)
-    if (f?.type === 'date' && typeof v === 'string') return v.slice(0, 10)
+    if (f?.type === 'date') return fmtDate(v as string)
     return String(v)
   }
 

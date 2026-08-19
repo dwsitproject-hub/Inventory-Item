@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ReportMeta, can, downloadTemplate, getUser, ingestions, quarantine, reportCatalog, uploadFile } from '../api'
-import { fmtInt } from '../format'
+import { fmtDateTime, fmtInt } from '../format'
 
 type FileRow = {
   id: number; fileName: string; template: string; source: string; status: string
@@ -68,7 +68,7 @@ export default function Ingestion() {
                       <td>{f.source}</td>
                       <td className="num">{fmtInt(f.rowsLoaded)}{f.rowsQuarantined > 0 && <span style={{ color: 'var(--warn)' }}> (+{fmtInt(f.rowsQuarantined)} quar.)</span>}</td>
                       <td><span className={'badge ' + badge(f.status)}>{f.status}</span></td>
-                      <td>{new Date(f.receivedAt).toLocaleString()}</td>
+                      <td>{fmtDateTime(f.receivedAt)}</td>
                       <td>{f.rowsQuarantined > 0 &&
                         <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => showQuarantine(f.id)}>
                           {qFor === f.id ? 'hide' : 'quarantine'}

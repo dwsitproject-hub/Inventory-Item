@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { SaldoRow, VarianceRow, lpmSaldo, lpmVariances } from '../api'
-import { fmtInt, fmtNum } from '../format'
+import { fmtInt, fmtNum, fmtPeriod } from '../format'
 
 const n = (v: number | null | undefined) => fmtNum(v)
 
@@ -69,7 +69,7 @@ export default function Lpm() {
                   <td>{r.material}</td>
                   <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description}</td>
                   <td>{r.uom}</td>
-                  <td>{String(r.month).slice(0, 7)}</td>
+                  <td>{fmtPeriod(String(r.month))}</td>
                   <td className="num">{n(r.opening)}</td>
                   <td className="num" style={{ color: 'var(--steel)' }}>{n(r.qtyIn)}</td>
                   <td className="num">{n(r.qtyOut)}</td>

@@ -74,7 +74,7 @@ public static class Exports
                     {
                         case null: break;
                         case decimal d: cell.Value = d; cell.Style.NumberFormat.Format = "#,##0.###"; break;
-                        case DateTime dt: cell.Value = dt; cell.Style.DateFormat.Format = "yyyy-mm-dd"; break;
+                        case DateTime dt: cell.Value = dt; cell.Style.DateFormat.Format = "dd/mm/yyyy"; break;
                         default:
                             // identifiers stay text — leading zeros preserved (FR-I11)
                             cell.SetValue(v.ToString());

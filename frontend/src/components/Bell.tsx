@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Notification, markAllRead, notifications } from '../api'
+import { fmtDateTime } from '../format'
 
 const badgeClass = (t: string) =>
   t === 'upload' ? 'b-info' : t === 'quarantine' ? 'b-warn' : 'b-err'
@@ -57,7 +58,7 @@ export default function Bell() {
                 <span className={'badge ' + badgeClass(n.eventType)}>{n.eventType}</span>
               </div>
               {n.body && <div style={{ color: 'var(--muted)', marginTop: 2 }}>{n.body}</div>}
-              <div style={{ color: 'var(--muted)', fontSize: 10.5, marginTop: 2 }}>{new Date(n.createdAt).toLocaleString()}</div>
+              <div style={{ color: 'var(--muted)', fontSize: 10.5, marginTop: 2 }}>{fmtDateTime(n.createdAt)}</div>
             </div>
           ))}
           {items.length === 0 && <div className="loading">no notifications yet</div>}

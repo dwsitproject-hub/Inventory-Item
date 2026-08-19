@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AuditEvent, auditExport, auditQuery, can } from '../api'
-import { fmtInt } from '../format'
+import { fmtDateTime, fmtInt } from '../format'
 
 const actionStyle = (a: string): { bg: string; fg: string } => {
   if (a.startsWith('auth.login_failed')) return { bg: 'var(--errbg)', fg: 'var(--err)' }
@@ -98,7 +98,7 @@ export default function Audit() {
                   <>
                     <tr key={r.id} style={{ cursor: r.detailJson ? 'pointer' : 'default' }}
                       onClick={() => setExpanded(expanded === r.id ? null : r.id)}>
-                      <td>{new Date(r.occurredAt).toLocaleString()}</td>
+                      <td>{fmtDateTime(r.occurredAt, true)}</td>
                       <td>{r.actorEmail ?? '—'}</td>
                       <td>{r.actorRole ?? '—'}</td>
                       <td><span className="badge" style={{ background: st.bg, color: st.fg }}>{r.action}</span></td>
