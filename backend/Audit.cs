@@ -141,7 +141,7 @@ public static class Audit
                 Csv(r["target_type"]), Csv(r["target_id"]), Csv(r["summary"]), Csv(r["ip"])
             }));
 
-        Log("audit.export", scope, "audit", null, $"Exported {rows.Count:N0} audit events");
+        Log("audit.export", scope, "audit", null, $"Exported {Fmt.N(rows.Count)} audit events");
         var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
         return Results.File(bytes, "text/csv", $"audit_log_{DateTime.UtcNow:yyyyMMdd_HHmm}.csv");
     }

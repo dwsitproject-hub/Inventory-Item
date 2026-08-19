@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AuditEvent, auditExport, auditQuery, can } from '../api'
+import { fmtInt } from '../format'
 
 const actionStyle = (a: string): { bg: string; fg: string } => {
   if (a.startsWith('auth.login_failed')) return { bg: 'var(--errbg)', fg: 'var(--err)' }
@@ -77,7 +78,7 @@ export default function Audit() {
         <div className="tbar">
           <div className="info">
             {loading ? <span><span className="spin" />loading…</span>
-              : <>Showing <b>{total === 0 ? 0 : offset + 1}–{Math.min(offset + size, total)}</b> of <b>{total.toLocaleString()}</b> events · newest first · click a row for detail</>}
+              : <>Showing <b>{fmtInt(total === 0 ? 0 : offset + 1)}–{fmtInt(Math.min(offset + size, total))}</b> of <b>{fmtInt(total)}</b> events · newest first · click a row for detail</>}
           </div>
           {can('audit', 'edit') && (
             <button className="btn o" onClick={() => auditExport(filters).catch(e => setError(e.message))}>

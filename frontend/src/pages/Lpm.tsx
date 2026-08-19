@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { SaldoRow, VarianceRow, lpmSaldo, lpmVariances } from '../api'
+import { fmtInt, fmtNum } from '../format'
 
-const n = (v: number | null | undefined) => v == null ? '' : Number(v).toLocaleString()
+const n = (v: number | null | undefined) => fmtNum(v)
 
 export default function Lpm() {
   const [saldo, setSaldo] = useState<SaldoRow[]>([])
@@ -38,9 +39,9 @@ export default function Lpm() {
       {error && <div className="err">{error}</div>}
 
       <div className="kpis" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
-        <div className="kpi"><div className="l">Materials tracked</div><div className="v">{new Set(saldo.map(s => s.material)).size.toLocaleString()}</div></div>
-        <div className="kpi"><div className="l">BC 4.0 lines with GR variance</div><div className="v" style={{ color: (summary?.withVariance ?? 0) > 0 ? 'var(--warn)' : undefined }}>{summary ? summary.withVariance.toLocaleString() : '…'}</div></div>
-        <div className="kpi"><div className="l">Beyond tolerance</div><div className="v" style={{ color: variances.some(v => v.beyondTolerance) ? 'var(--err)' : 'var(--ok)' }}>{variances.filter(v => v.beyondTolerance).length.toLocaleString()}</div></div>
+        <div className="kpi"><div className="l">Materials tracked</div><div className="v">{fmtInt(new Set(saldo.map(s => s.material)).size)}</div></div>
+        <div className="kpi"><div className="l">BC 4.0 lines with GR variance</div><div className="v" style={{ color: (summary?.withVariance ?? 0) > 0 ? 'var(--warn)' : undefined }}>{summary ? fmtInt(summary.withVariance) : '…'}</div></div>
+        <div className="kpi"><div className="l">Beyond tolerance</div><div className="v" style={{ color: variances.some(v => v.beyondTolerance) ? 'var(--err)' : 'var(--ok)' }}>{fmtInt(variances.filter(v => v.beyondTolerance).length)}</div></div>
       </div>
 
       <div className="filters">
@@ -74,7 +75,7 @@ export default function Lpm() {
                   <td className="num">{n(r.qtyOut)}</td>
                   <td className="num">{n(r.adjustment)}</td>
                   <td className="num"><b>{n(r.closing)}</b></td>
-                  <td className="num">{r.lines}</td>
+                  <td className="num">{fmtInt(r.lines)}</td>
                 </tr>
               ))}
               {!loading && saldo.length === 0 && <tr><td colSpan={10} style={{ color: 'var(--muted)', padding: 24 }}>No materials match.</td></tr>}
@@ -86,7 +87,7 @@ export default function Lpm() {
       <div className="tablewrap">
         <div className="tbar">
           <div className="info">
-            <b>Goods-receipt realisation variances</b> — BC 4.0 lines where delivered ≠ declared ({summary ? `${summary.withVariance.toLocaleString()} variance(s) · ${summary.deliveryTracked.toLocaleString()} of ${summary.totalLines.toLocaleString()} lines carry delivery data` : '…'})
+            <b>Goods-receipt realisation variances</b> — BC 4.0 lines where delivered ≠ declared ({summary ? `${fmtInt(summary.withVariance)} variance(s) · ${fmtInt(summary.deliveryTracked)} of ${fmtInt(summary.totalLines)} lines carry delivery data` : '…'})
           </div>
         </div>
         <div className="gridscroll" style={{ maxHeight: '40vh' }}>
@@ -108,8 +109,8 @@ export default function Lpm() {
                   <td className="num">{n(v.bcQty)} {v.uom}</td>
                   <td className="num">{n(v.deliveryQty)}</td>
                   <td className="num" style={{ color: 'var(--err)' }}>{n(v.variance)}</td>
-                  <td className="num">{v.variancePct != null ? v.variancePct + '%' : ''}</td>
-                  <td>{v.tolerancePct != null ? v.tolerancePct + ' %' : '—'}</td>
+                  <td className="num">{v.variancePct != null ? fmtNum(v.variancePct) + '%' : ''}</td>
+                  <td>{v.tolerancePct != null ? fmtNum(v.tolerancePct) + ' %' : '—'}</td>
                 </tr>
               ))}
               {variances.length === 0 && <tr><td colSpan={11} style={{ color: 'var(--muted)', padding: 24 }}>No goods-receipt variances in the loaded data. 🎉</td></tr>}

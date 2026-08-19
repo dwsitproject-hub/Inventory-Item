@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ReportMeta, can, downloadTemplate, getUser, ingestions, quarantine, reportCatalog, uploadFile } from '../api'
+import { fmtInt } from '../format'
 
 type FileRow = {
   id: number; fileName: string; template: string; source: string; status: string
@@ -65,7 +66,7 @@ export default function Ingestion() {
                       <td>{f.fileName}</td>
                       <td>{f.template}</td>
                       <td>{f.source}</td>
-                      <td className="num">{f.rowsLoaded.toLocaleString()}{f.rowsQuarantined > 0 && <span style={{ color: 'var(--warn)' }}> (+{f.rowsQuarantined} quar.)</span>}</td>
+                      <td className="num">{fmtInt(f.rowsLoaded)}{f.rowsQuarantined > 0 && <span style={{ color: 'var(--warn)' }}> (+{fmtInt(f.rowsQuarantined)} quar.)</span>}</td>
                       <td><span className={'badge ' + badge(f.status)}>{f.status}</span></td>
                       <td>{new Date(f.receivedAt).toLocaleString()}</td>
                       <td>{f.rowsQuarantined > 0 &&
@@ -110,7 +111,7 @@ export default function Ingestion() {
                 <div className="note" style={{ marginTop: 12 }}>
                   <b>{result.status}</b>
                   {result.template && <> · template {result.template}</>}
-                  {result.rowsTotal != null && <> · {result.rowsLoaded}/{result.rowsTotal} rows loaded, {result.rowsQuarantined} quarantined</>}
+                  {result.rowsTotal != null && <> · {fmtInt(result.rowsLoaded)}/{fmtInt(result.rowsTotal)} rows loaded, {fmtInt(result.rowsQuarantined)} quarantined</>}
                   {result.message && <> · {result.message}</>}
                 </div>
               )}
@@ -146,12 +147,12 @@ export default function Ingestion() {
                       <td><b>{r.template}</b></td>
                       <td>{r.title}</td>
                       <td>{fmt}</td>
-                      <td className="num">{r.fields.length}</td>
+                      <td className="num">{fmtInt(r.fields.length)}</td>
                       <td>{r.page === 'movement' ? 'Inventory Movement' : 'Reports'}</td>
                       <td>
                         {loaded.length === 0
                           ? <span className="badge b-warn">not yet uploaded</span>
-                          : <span className="badge b-ok">{loaded.length} file{loaded.length > 1 ? 's' : ''} · {rows.toLocaleString()} rows</span>}
+                          : <span className="badge b-ok">{loaded.length} file{loaded.length > 1 ? 's' : ''} · {fmtInt(rows)} rows</span>}
                       </td>
                       <td onClick={e => e.stopPropagation()}>
                         <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }}

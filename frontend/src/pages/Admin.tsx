@@ -4,6 +4,7 @@ import {
   adminMaster, adminResetPassword, adminSetStatus, adminUsers, can, me, rolePermissions,
   saveRolePermissions, setPermissions
 } from '../api'
+import { fmtInt } from '../format'
 
 export default function Admin() {
   const [tab, setTab] = useState<'users' | 'roles' | 'master'>('users')
@@ -292,7 +293,7 @@ function Master() {
               {data.permits.map((p: any) => (
                 <tr key={p.id}>
                   <td>{p.permitNo}</td><td>{p.entityName}</td><td>{p.siteName ?? '—'}</td>
-                  <td className="num">{Number(p.documents).toLocaleString()}</td>
+                  <td className="num">{fmtInt(p.documents)}</td>
                 </tr>
               ))}
             </tbody>

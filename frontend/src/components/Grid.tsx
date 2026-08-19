@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReportMeta, SavedView, SortSpec, can, deleteView, exportReport, listViews, queryReport, saveView } from '../api'
+import { fmtInt, fmtNum } from '../format'
 
 /**
  * Server-side report grid (FR-R4, FR-R9..R13).
@@ -131,8 +132,7 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
   function fmt(name: string, v: unknown): string {
     if (v == null) return ''
     const f = fieldsByName.get(name)
-    if (f?.type === 'number' && typeof v === 'number') return v.toLocaleString()
-    if (f?.type === 'number') { const n = Number(v); if (!Number.isNaN(n)) return n.toLocaleString() }
+    if (f?.type === 'number') return fmtNum(v as number | string)
     if (f?.type === 'date' && typeof v === 'string') return v.slice(0, 10)
     return String(v)
   }
@@ -146,8 +146,8 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
       <div className="tbar">
         <div className="info">
           {loading ? <span><span className="spin" />loading…</span> : (
-            <>Showing <b>{total === 0 ? 0 : offset + 1}–{Math.min(offset + pageSize, total)}</b> of <b>{total.toLocaleString()}{total > 100000 ? '+' : ''}</b> rows
-              · server-side · {meta.elapsedMs ?? '–'} ms</>
+            <>Showing <b>{fmtInt(total === 0 ? 0 : offset + 1)}–{fmtInt(Math.min(offset + pageSize, total))}</b> of <b>{fmtInt(total)}{total > 100000 ? '+' : ''}</b> rows
+              · server-side · {fmtInt(meta.elapsedMs) || '–'} ms</>
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

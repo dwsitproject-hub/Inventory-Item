@@ -218,7 +218,7 @@ api.MapPost("/ingestions/upload", async (HttpRequest http, HttpContext ctx) =>
     if (file is null || file.Length == 0) return Results.Problem(statusCode: 400, title: "VAL-001", detail: "file is required.");
     if (file.Length > MaxUploadBytes)
         return Results.Problem(statusCode: 400, title: "VAL-001",
-            detail: $"File is {file.Length / 1024.0 / 1024.0:N1} MB; the cap is {MaxUploadBytes / 1024 / 1024} MB.");
+            detail: $"File is {Fmt.N(file.Length / 1024.0 / 1024.0, 1)} MB; the cap is {Fmt.N(MaxUploadBytes / 1024 / 1024)} MB.");
 
     using var ms = new MemoryStream();
     await file.CopyToAsync(ms);

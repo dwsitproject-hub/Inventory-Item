@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { dashboard } from '../api'
+import { fmtInt } from '../format'
 
 type Summary = {
   kpis: { documents: number; lines: number; filesLoaded: number; quarantined: number }
@@ -31,10 +32,10 @@ export default function Dashboard() {
       <div className="crumb">Home · Overview (scoped to your access)</div>
 
       <div className="kpis">
-        <div className="kpi"><div className="l">Customs documents</div><div className="v">{data.kpis.documents.toLocaleString()}</div></div>
-        <div className="kpi"><div className="l">Report lines</div><div className="v">{data.kpis.lines.toLocaleString()}</div></div>
-        <div className="kpi"><div className="l">Files loaded</div><div className="v">{data.kpis.filesLoaded.toLocaleString()}</div></div>
-        <div className="kpi"><div className="l">Quarantined rows</div><div className="v" style={{ color: data.kpis.quarantined > 0 ? 'var(--warn)' : undefined }}>{data.kpis.quarantined.toLocaleString()}</div></div>
+        <div className="kpi"><div className="l">Customs documents</div><div className="v">{fmtInt(data.kpis.documents)}</div></div>
+        <div className="kpi"><div className="l">Report lines</div><div className="v">{fmtInt(data.kpis.lines)}</div></div>
+        <div className="kpi"><div className="l">Files loaded</div><div className="v">{fmtInt(data.kpis.filesLoaded)}</div></div>
+        <div className="kpi"><div className="l">Quarantined rows</div><div className="v" style={{ color: data.kpis.quarantined > 0 ? 'var(--warn)' : undefined }}>{fmtInt(data.kpis.quarantined)}</div></div>
       </div>
 
       <div className="row2">
@@ -46,7 +47,7 @@ export default function Dashboard() {
                 <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', height: 120 }}>
                   {['BC23', 'BC40'].map(tpl => {
                     const v = data.trend.find(t => t.month === m && t.template === tpl)?.lines ?? 0
-                    return <div key={tpl} title={`${tpl}: ${v}`} style={{ width: 14, height: Math.max(2, v / max * 120), background: tpl === 'BC23' ? 'var(--steel)' : 'var(--amber)' }} />
+                    return <div key={tpl} title={`${tpl}: ${fmtInt(v)}`} style={{ width: 14, height: Math.max(2, v / max * 120), background: tpl === 'BC23' ? 'var(--steel)' : 'var(--amber)' }} />
                   })}
                 </div>
                 <small style={{ fontSize: 10.5, color: 'var(--muted)' }}>{m}</small>
@@ -65,7 +66,7 @@ export default function Dashboard() {
             <div className="item" key={f.id}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.fileName} <small style={{ color: 'var(--muted)' }}>({f.template} · {f.source})</small></span>
               <span className={'badge ' + badge(f.status)}>
-                {f.status} · {f.rowsLoaded.toLocaleString()}{f.rowsQuarantined > 0 ? ` (+${f.rowsQuarantined} quar.)` : ''}
+                {f.status} · {fmtInt(f.rowsLoaded)}{f.rowsQuarantined > 0 ? ` (+${fmtInt(f.rowsQuarantined)} quar.)` : ''}
               </span>
             </div>
           ))}

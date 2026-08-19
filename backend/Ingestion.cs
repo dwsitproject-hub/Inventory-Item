@@ -371,12 +371,12 @@ public static class Ingestion
         await tx.CommitAsync();
 
         // alert events (FR-N1): upload to everyone in scope; quarantine detail to stewards/admins
-        var summary = $"{template}: {good.Count:N0}/{parsed.Lines.Count:N0} rows loaded"
-                      + (bad.Count > 0 ? $", {bad.Count:N0} quarantined" : "") + $" · source: {source}";
+        var summary = $"{template}: {Fmt.N(good.Count)}/{Fmt.N(parsed.Lines.Count)} rows loaded"
+                      + (bad.Count > 0 ? $", {Fmt.N(bad.Count)} quarantined" : "") + $" · source: {source}";
         await Notifications.Emit(con, "upload", $"New file ingested — {fileName}", summary);
         if (bad.Count > 0)
             await Notifications.Emit(con, "quarantine", $"Rows quarantined — {fileName}",
-                $"{bad.Count:N0} row(s) failed validation and need review (Ingestion page).",
+                $"{Fmt.N(bad.Count)} row(s) failed validation and need review (Ingestion page).",
                 new[] { "Super Admin", "Admin", "Data Steward" });
 
         Audit.Log("ingest.load", null, "file", fileName, summary,

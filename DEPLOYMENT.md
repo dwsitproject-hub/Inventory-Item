@@ -350,8 +350,11 @@ git tag -a staging-2026.08.11 -m "staging cut" && git push origin staging-2026.0
 
 Then on each server:
 
+Front End
+cd /opt/bc-inventory && git pull && ./deploy/update.sh frontend
 
-cd /opt/bc-inventory && git pull && ./deploy/update.sh backend && ./deploy/update.sh frontend
+Back End
+cd /opt/bc-inventory && git pull && ./deploy/update.sh backend
 
 
 

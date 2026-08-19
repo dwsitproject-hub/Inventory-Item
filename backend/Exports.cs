@@ -37,7 +37,7 @@ public static class Exports
 
         // exporting data leaves the system — always audited (FR-A7)
         Audit.Log("report.export", scope, "report", key,
-            $"Exported {raw.Count:N0} rows from {b.Report.Title} as {format.ToLowerInvariant()}",
+            $"Exported {Fmt.N(raw.Count)} rows from {b.Report.Title} as {format.ToLowerInvariant()}",
             new { format, columns = b.Columns, sort = req.Sort, filters = req.Filters, rows = raw.Count }, ip);
 
         if (format.Equals("csv", StringComparison.OrdinalIgnoreCase))
