@@ -232,9 +232,12 @@ public static class Catalog
         new("Jenis Dok.", FieldType.Text, "Document", "Jenis BC"),
         new("Dok. Pabean / Nomor", FieldType.Text, "Dok. Pabean", "NoPen"),
         new("Dok. Pabean / Tanggal", FieldType.Date, "Dok. Pabean", "Tanggal Nopen"),
-        new("Bukti Penerimaan / Nomor", FieldType.Text, "Bukti Penerimaan"),
-        new("Bukti Penerimaan / Tanggal", FieldType.Date, "Bukti Penerimaan"),
-        new("Bukti Penerimaan / Tgl buka", FieldType.Date, "Bukti Penerimaan"),
+        // BC 3.0 is an outbound report, but its source file heads these three "Bukti
+        // Penerimaan". The stored names stay verbatim for lineage; only the display label is
+        // corrected, so the column reads the same as on the other Pengeluaran reports.
+        new("Bukti Penerimaan / Nomor", FieldType.Text, "Bukti Pengeluaran", "Bukti Pengeluaran / Nomor"),
+        new("Bukti Penerimaan / Tanggal", FieldType.Date, "Bukti Pengeluaran", "Bukti Pengeluaran / Tanggal"),
+        new("Bukti Penerimaan / Tgl buka", FieldType.Date, "Bukti Pengeluaran", "Bukti Pengeluaran / Tgl buka"),
         new("Dokumen / Nomor", FieldType.Text, "Dokumen"),
         new("Dokumen / (unlabelled)", FieldType.Text, "Dokumen"),
         new("Dokumen / Tanggal", FieldType.Date, "Dokumen"),

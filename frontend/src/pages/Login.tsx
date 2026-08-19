@@ -28,7 +28,7 @@ export default function Login() {
     <div className="loginwrap">
       <form className="logincard" onSubmit={submit}>
         <div className="brand" style={{ background: 'transparent', border: 'none', padding: 0 }}>
-          <div className="logo">KPN</div>
+          <div className="logo">PT SPC</div>
           <div style={{ color: 'var(--navy)' }}><b>BC Inventory</b><span style={{ color: 'var(--muted)' }}>Reporting System</span></div>
         </div>
         <h1>Sign in</h1>

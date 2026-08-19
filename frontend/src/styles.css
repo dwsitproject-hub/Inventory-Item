@@ -10,7 +10,8 @@ body{margin:0;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-s
 /* app shell */
 .app{display:grid;grid-template-columns:230px 1fr;grid-template-rows:56px 1fr;height:100vh;grid-template-areas:"brand top" "side main"}
 .brand{grid-area:brand;background:var(--navy);color:#fff;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid #0a1e30}
-.brand .logo{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,var(--red),#e0574f);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#fff}
+/* auto width: the badge holds a short company name, not a 3-letter monogram */
+.brand .logo{min-width:26px;height:26px;padding:0 8px;border-radius:6px;background:linear-gradient(135deg,var(--red),#e0574f);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11.5px;letter-spacing:.3px;white-space:nowrap;color:#fff}
 .brand b{font-size:14px}
 .brand span{font-size:10.5px;color:#9db3c7;display:block;margin-top:-2px}
 .top{grid-area:top;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px}

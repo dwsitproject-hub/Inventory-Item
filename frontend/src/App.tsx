@@ -18,7 +18,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app">
       <div className="brand">
-        <div className="logo">KPN</div>
+        <div className="logo">PT SPC</div>
         <div><b>BC Inventory</b><span>Reporting System</span></div>
       </div>
       <div className="top">
