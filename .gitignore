@@ -4,6 +4,15 @@
 .env.local
 deploy/**/.env
 !**/.env.example
+# ApsaraDB RDS endpoint and account password.
+deploy/db/apsaradb.env
+# Generated at cutover; carries the old database password as a literal so the rollback
+# does not depend on a backup file.
+deploy/backend/rollback-to-selfmanaged.sh
+
+# ---------- database dumps ----------
+# pg_dump output and the row-count baselines beside it: the full customs dataset.
+deploy/db/backups/
 
 # ---------- real customs data ----------
 # The sample extracts are genuine BC 2.3 / BC 4.0 / Laporan exports: real vendor and supplier

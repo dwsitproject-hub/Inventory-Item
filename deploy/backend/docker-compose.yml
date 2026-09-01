@@ -10,7 +10,9 @@ services:
     container_name: bc-inventory-api
     restart: unless-stopped
     environment:
-      ConnectionStrings__Db: "Host=${DB_HOST:-172.28.92.60};Port=${DB_PORT:-5443};Database=bcinventory;Username=bcapp;Password=${DB_PASSWORD:?set DB_PASSWORD in .env};Maximum Pool Size=25;Timeout=15;Command Timeout=60"
+      # Database name and user are variables so the app can be pointed at an ApsaraDB RDS
+      # account whose names differ from the self-managed ones.
+      ConnectionStrings__Db: "Host=${DB_HOST:-172.28.92.60};Port=${DB_PORT:-5443};Database=${DB_NAME:-bcinventory};Username=${DB_USER:-bcapp};Password=${DB_PASSWORD:?set DB_PASSWORD in .env};SSL Mode=${DB_SSLMODE:-Prefer};Trust Server Certificate=true;Maximum Pool Size=25;Timeout=15;Command Timeout=60"
       Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env — 32+ random chars}
       # First-run only: initial passwords for the two seeded accounts.
       Seed__AdminPassword: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
