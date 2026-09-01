@@ -213,7 +213,7 @@ public static class Permissions
         Invalidate();
 
         await Notifications.Emit(con, "security", $"Role permissions changed — {req.Role}",
-            $"Updated by {scope.Email}", new[] { SuperAdmin, "Admin" });
+            $"Updated by {scope.Email}");
         Audit.Log("admin.role.permissions", scope, "role", req.Role,
             $"Updated page permissions for {req.Role}", req.Pages);
         return Results.Ok(new { role = req.Role, saved = true });

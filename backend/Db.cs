@@ -147,6 +147,23 @@ public static class Db
             );
             alter table app.notification_deliveries add column if not exists email_status text;
             alter table app.notification_deliveries add column if not exists email_error text;
+            -- A recipient may want a notification by e-mail but not in the bell. The row is still
+            -- written so its delivery status has somewhere to live; this flag decides whether the
+            -- in-app list shows it.
+            alter table app.notification_deliveries add column if not exists in_app boolean not null default true;
+
+            -- Per-user notification routing, managed from Administration -> Notifications.
+            -- A user with no row for an event falls back to the event's default roles, so new
+            -- users and newly added event types are never silently unsubscribed.
+            create table if not exists app.notification_subscriptions (
+                id bigint generated always as identity primary key,
+                user_id bigint not null references auth.users(id),
+                event_type text not null,
+                in_app boolean not null default true,
+                email boolean not null default true,
+                updated_at timestamptz not null default now(),
+                unique (user_id, event_type)
+            );
 
             -- immutable audit trail (FR-A7, TechDoc §5.2 audit.audit_events)
             create schema if not exists audit;

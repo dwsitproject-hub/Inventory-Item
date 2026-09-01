@@ -64,8 +64,7 @@ public static class Admin
             """, new { req.Email, req.FullName, req.Role, hash = BCrypt.Net.BCrypt.HashPassword(req.Password, 11), req.AllEntities, req.EntityId, req.SiteId });
 
         await Notifications.Emit(con, "security", $"User created — {req.Email}",
-            $"Role {req.Role}, scope {(req.AllEntities ? "all entities" : $"entity #{req.EntityId}")} · by {scope.Email}",
-            new[] { "Super Admin", "Admin" });
+            $"Role {req.Role}, scope {(req.AllEntities ? "all entities" : $"entity #{req.EntityId}")} · by {scope.Email}");
         Audit.Log("admin.user.create", scope, "user", id.ToString(), $"Created user {req.Email}",
             new { req.Email, req.FullName, req.Role, req.AllEntities, req.EntityId, req.SiteId });
         return Results.Ok(new { id });
@@ -84,8 +83,7 @@ public static class Admin
             "update auth.users set status = @s where id = @id returning email", new { s = req.Status, id });
         if (email is null) return Results.Problem(statusCode: 404, title: "VAL-001", detail: "User not found.");
 
-        await Notifications.Emit(con, "security", $"User {req.Status} — {email}", $"By {scope.Email}",
-            new[] { "Super Admin", "Admin" });
+        await Notifications.Emit(con, "security", $"User {req.Status} — {email}", $"By {scope.Email}");
         Audit.Log("admin.user.status", scope, "user", id.ToString(), $"Set {email} to {req.Status}",
             new { email, status = req.Status });
         return Results.Ok(new { id, status = req.Status });
@@ -101,8 +99,7 @@ public static class Admin
             "update auth.users set password_hash = @h where id = @id returning email",
             new { h = BCrypt.Net.BCrypt.HashPassword(req.Password, 11), id });
         if (email is null) return Results.Problem(statusCode: 404, title: "VAL-001", detail: "User not found.");
-        await Notifications.Emit(con, "security", $"Password reset — {email}", $"By {scope.Email}",
-            new[] { "Super Admin", "Admin" });
+        await Notifications.Emit(con, "security", $"Password reset — {email}", $"By {scope.Email}");
         Audit.Log("admin.user.reset", scope, "user", id.ToString(), $"Reset password for {email}", new { email });
         return Results.Ok(new { id });
     }

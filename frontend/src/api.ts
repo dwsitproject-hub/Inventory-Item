@@ -120,6 +120,20 @@ export const rolePermissions = (): Promise<RoleMatrix> => request('/admin/role-p
 export const saveRolePermissions = (role: string, pages: RolePermRow[]) =>
   request('/admin/role-permissions', { method: 'PUT', body: JSON.stringify({ role, pages }) })
 
+// ---- notification routing ----
+export type NotifEventPref = { event: string; inApp: boolean; email: boolean; isDefault: boolean }
+export type NotifMatrix = {
+  events: { key: string; title: string; description: string; defaultRoles: string[] }[]
+  users: { id: number; email: string; fullName: string; role: string; status: string; events: NotifEventPref[] }[]
+  smtpConfigured: boolean
+  canEdit: boolean
+}
+export type NotifSaveRow = { userId: number; event: string; inApp: boolean; email: boolean }
+export const notificationSubscriptions = (): Promise<NotifMatrix> =>
+  request('/admin/notification-subscriptions')
+export const saveNotificationSubscriptions = (rows: NotifSaveRow[]) =>
+  request('/admin/notification-subscriptions', { method: 'PUT', body: JSON.stringify({ rows }) })
+
 export const me = () => request('/me')
 export const reportCatalog = (): Promise<ReportMeta[]> => request('/reports')
 export const dashboard = () => request('/dashboard/summary')

@@ -225,8 +225,7 @@ public static class Ingestion
                 insert into ingest.ingestion_files (file_name, file_hash, file_size, source, template, status, error, uploaded_by)
                 values (@fileName, @hash, @size, @source, @template, 'failed', @err, @uploadedBy)
                 """, new { fileName, hash, size = (long)bytes.Length, source, template, err = ex.Message, uploadedBy });
-            await Notifications.Emit(con, "error", $"Ingestion failed — {fileName}", ex.Message,
-                new[] { "Super Admin", "Admin", "Data Steward" });
+            await Notifications.Emit(con, "error", $"Ingestion failed — {fileName}", ex.Message);
             Audit.Log("ingest.failed", null, "file", fileName, $"Parse failed: {ex.Message}",
                 new { source, template, hash }, actorEmailOverride: uploadedBy);
             return new { status = "failed", message = ex.Message };
@@ -378,8 +377,7 @@ public static class Ingestion
         await Notifications.Emit(con, "upload", $"New file ingested — {fileName}", summary);
         if (bad.Count > 0)
             await Notifications.Emit(con, "quarantine", $"Rows quarantined — {fileName}",
-                $"{Fmt.N(bad.Count)} row(s) failed validation and need review (Ingestion page).",
-                new[] { "Super Admin", "Admin", "Data Steward" });
+                $"{Fmt.N(bad.Count)} row(s) failed validation and need review (Ingestion page).");
 
         Audit.Log("ingest.load", null, "file", fileName, summary,
             new { ingestionId = fileId, template, source, hash, rowsTotal = parsed.Lines.Count, rowsLoaded = good.Count, rowsQuarantined = bad.Count },

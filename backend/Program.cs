@@ -175,6 +175,13 @@ api.MapPost("/admin/users/{id:long}/reset", (long id, ResetPasswordRequest req, 
 api.MapGet("/admin/master", (System.Security.Claims.ClaimsPrincipal user) =>
     Admin.Master(ds, Auth.Scope(user))).RequireAuthorization();
 
+// ---------- notification routing: who receives which alert, on which channel ----------
+api.MapGet("/admin/notification-subscriptions", (System.Security.Claims.ClaimsPrincipal user) =>
+    Notifications.Subscriptions(ds, Auth.Scope(user))).RequireAuthorization();
+
+api.MapPut("/admin/notification-subscriptions", (NotificationSubscriptionUpdate req, HttpContext ctx) =>
+    Notifications.UpdateSubscriptions(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
+
 api.MapPost("/admin/entities", (EntityRequest req, HttpContext ctx) =>
     Admin.AddEntity(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 

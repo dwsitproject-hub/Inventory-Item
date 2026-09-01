@@ -1,23 +1,182 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import {
-  AdminUser, RoleMatrix, RolePermRow, adminAddEntity, adminAddPermit, adminAddSite, adminCreateUser,
-  adminMaster, adminResetPassword, adminSetStatus, adminUsers, can, me, rolePermissions,
+  AdminUser, NotifMatrix, NotifSaveRow, RoleMatrix, RolePermRow, adminAddEntity, adminAddPermit,
+  adminAddSite, adminCreateUser, adminMaster, adminResetPassword, adminSetStatus, adminUsers, can,
+  me, notificationSubscriptions, rolePermissions, saveNotificationSubscriptions,
   saveRolePermissions, setPermissions
 } from '../api'
 import { fmtInt } from '../format'
 
 export default function Admin() {
-  const [tab, setTab] = useState<'users' | 'roles' | 'master'>('users')
+  const [tab, setTab] = useState<'users' | 'roles' | 'notifications' | 'master'>('users')
   return (
     <>
       <h1 className="page">Administration</h1>
-      <div className="crumb">Users, roles &amp; access scope · page permissions · master data governance</div>
+      <div className="crumb">Users, roles &amp; access scope · page permissions · notification routing · master data governance</div>
       <div className="chips" style={{ marginBottom: 14 }}>
         <span className={'chk' + (tab === 'users' ? ' on' : '')} onClick={() => setTab('users')}>User Management</span>
         <span className={'chk' + (tab === 'roles' ? ' on' : '')} onClick={() => setTab('roles')}>Role Management</span>
+        <span className={'chk' + (tab === 'notifications' ? ' on' : '')} onClick={() => setTab('notifications')}>Notifications</span>
         <span className={'chk' + (tab === 'master' ? ' on' : '')} onClick={() => setTab('master')}>Master Data</span>
       </div>
-      {tab === 'users' ? <Users /> : tab === 'roles' ? <RoleManagement /> : <Master />}
+      {tab === 'users' ? <Users />
+        : tab === 'roles' ? <RoleManagement />
+        : tab === 'notifications' ? <NotificationRouting />
+        : <Master />}
+    </>
+  )
+}
+
+function NotificationRouting() {
+  const [data, setData] = useState<NotifMatrix | null>(null)
+  const [draft, setDraft] = useState<Record<string, { inApp: boolean; email: boolean }>>({})
+  const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const key = (userId: number, event: string) => userId + '|' + event
+
+  const load = async () => {
+    try {
+      const d = await notificationSubscriptions()
+      setData(d)
+      const next: Record<string, { inApp: boolean; email: boolean }> = {}
+      for (const u of d.users) for (const e of u.events) next[key(u.id, e.event)] = { inApp: e.inApp, email: e.email }
+      setDraft(next)
+    } catch (e: any) { setError(e.message) }
+  }
+  useEffect(() => { load() }, [])
+
+  const toggle = (userId: number, event: string, channel: 'inApp' | 'email') => {
+    const k = key(userId, event)
+    setDraft(d => ({ ...d, [k]: { ...d[k], [channel]: !d[k][channel] } }))
+    setInfo('')
+  }
+
+  // Only rows the administrator actually changed are sent. Anything still sitting on its role
+  // default stays implicit, so a later change to an event's defaults still reaches everyone who
+  // never explicitly opted out.
+  const changed = (): NotifSaveRow[] => {
+    if (!data) return []
+    const out: NotifSaveRow[] = []
+    for (const u of data.users) for (const e of u.events) {
+      const d = draft[key(u.id, e.event)]
+      if (d && (d.inApp !== e.inApp || d.email !== e.email))
+        out.push({ userId: u.id, event: e.event, inApp: d.inApp, email: d.email })
+    }
+    return out
+  }
+
+  const save = async () => {
+    setSaving(true); setError(''); setInfo('')
+    try {
+      const rows = changed()
+      await saveNotificationSubscriptions(rows)
+      setInfo(`Saved routing for ${rows.length} setting(s).`)
+      load()
+    } catch (e: any) { setError(e.message) }
+    finally { setSaving(false) }
+  }
+
+  if (error && !data) return <div className="err">{error}</div>
+  if (!data) return <div className="loading"><span className="spin" />loading notification routing…</div>
+
+  const dirty = changed().length
+
+  return (
+    <>
+      {error && <div className="err" style={{ marginBottom: 12 }}>{error}</div>}
+      {info && <div className="note" style={{ marginBottom: 12 }}>{info}</div>}
+      {!data.smtpConfigured && (
+        <div className="note" style={{ marginBottom: 12 }}>
+          <b>E-mail sending is switched off.</b> No SMTP relay is configured, so the Email column is
+          recorded but nothing is sent — in-app notifications are unaffected. Set <code>SMTP_HOST</code> on
+          the API server to turn the channel on; only events raised after that are e-mailed, the
+          existing backlog is not flushed.
+        </div>
+      )}
+      {!data.canEdit && (
+        <div className="note" style={{ marginBottom: 12 }}>
+          You can review who receives what, but changing it needs edit rights on Administration.
+        </div>
+      )}
+
+      <div className="tablewrap">
+        <div className="tbar">
+          <div className="info">
+            Who receives which alert, and on which channel. Boxes still on the role default are
+            marked as such.
+          </div>
+          {data.canEdit && (
+            <button className="btn p" disabled={!dirty || saving} onClick={save}>
+              {saving ? 'Saving…' : dirty ? `Save ${dirty} change(s)` : 'Saved'}
+            </button>
+          )}
+        </div>
+        <div style={{ overflow: 'auto' }}>
+          <table className="grid">
+            <thead>
+              <tr>
+                <th rowSpan={2} style={{ minWidth: 190 }}>User</th>
+                <th rowSpan={2} style={{ minWidth: 105 }}>Role</th>
+                {data.events.map(e => (
+                  <th key={e.key} colSpan={2} style={{ textAlign: 'center' }} title={e.description}>{e.title}</th>
+                ))}
+              </tr>
+              <tr>
+                {data.events.map(e => (
+                  <Fragment key={e.key}>
+                    <th style={{ width: 64, textAlign: 'center', fontWeight: 500 }}>In-app</th>
+                    <th style={{ width: 64, textAlign: 'center', fontWeight: 500 }}>Email</th>
+                  </Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.users.map(u => {
+                const inactive = u.status !== 'active'
+                return (
+                  <tr key={u.id}>
+                    <td style={{ opacity: inactive ? .55 : 1, whiteSpace: 'normal' }}>
+                      <b>{u.fullName}</b>
+                      <div style={{ color: 'var(--muted)', fontSize: 11.5 }}>{u.email}</div>
+                      {inactive && <span className="badge b-warn">disabled — receives nothing</span>}
+                    </td>
+                    <td style={{ opacity: inactive ? .55 : 1 }}>{u.role}</td>
+                    {u.events.map(e => {
+                      const d = draft[key(u.id, e.event)] ?? { inApp: e.inApp, email: e.email }
+                      const onDefault = e.isDefault && d.inApp === e.inApp && d.email === e.email
+                      return (
+                        <Fragment key={e.event}>
+                          <td style={{ textAlign: 'center' }}>
+                            <input type="checkbox" checked={d.inApp} disabled={!data.canEdit || inactive}
+                              onChange={() => toggle(u.id, e.event, 'inApp')} />
+                            {onDefault && <div style={{ fontSize: 9, color: 'var(--muted)' }}>default</div>}
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <input type="checkbox" checked={d.email} disabled={!data.canEdit || inactive}
+                              onChange={() => toggle(u.id, e.event, 'email')} />
+                          </td>
+                        </Fragment>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="note" style={{ marginTop: 12 }}>
+        {data.events.map(e => (
+          <div key={e.key} style={{ marginBottom: 4 }}>
+            <b>{e.title}</b> — {e.description} Default recipients: {e.defaultRoles.join(', ')}.
+          </div>
+        ))}
+        Disabled users receive nothing on either channel, whatever is ticked here. Every change is
+        written to the audit log.
+      </div>
     </>
   )
 }
