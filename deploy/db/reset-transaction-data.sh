@@ -18,8 +18,34 @@
 set -e
 
 cd "$(dirname "$0")"
-[ -f apsaradb.env ] || { echo "FATAL: apsaradb.env not found — it holds the live database connection."; exit 1; }
-. ./apsaradb.env
+
+# Where the live database is. deploy/backend/.env wins because it is not a copy of the
+# connection details — it IS the ones the API connects with, so this can never clear a
+# database the application is not using. apsaradb.env is the fallback for a host that has
+# the migration tooling but no API (and the retired self-managed DB server had only that).
+get() { grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2-; }
+BE_ENV=../backend/.env
+if [ -f "$BE_ENV" ] && [ -n "$(get "$BE_ENV" DB_HOST)" ]; then
+  SOURCE_FILE="deploy/backend/.env (the connection the API uses)"
+  RDS_HOST=$(get "$BE_ENV" DB_HOST)
+  RDS_PORT=$(get "$BE_ENV" DB_PORT)
+  RDS_DB=$(get "$BE_ENV" DB_NAME)
+  RDS_USER=$(get "$BE_ENV" DB_USER)
+  RDS_PW=$(get "$BE_ENV" DB_PASSWORD)
+  # These two were added with the ApsaraDB migration; an older .env predates them.
+  [ -n "$RDS_DB" ]   || RDS_DB=bcinventory
+  [ -n "$RDS_USER" ] || RDS_USER=bcapp
+  [ -n "$RDS_PORT" ] || RDS_PORT=5432
+  PGCLIENT_IMAGE="${PGCLIENT_IMAGE:-postgres:18}"
+elif [ -f apsaradb.env ]; then
+  SOURCE_FILE="deploy/db/apsaradb.env"
+  . ./apsaradb.env
+else
+  echo "FATAL: no database connection found."
+  echo "  Run this on the API server, where deploy/backend/.env holds the live connection,"
+  echo "  or create deploy/db/apsaradb.env from apsaradb.env.example."
+  exit 1
+fi
 
 WITH_AUDIT=no
 ASSUME_YES=no
@@ -56,6 +82,7 @@ counts() {  # counts "<space separated tables>"
 }
 
 echo "TARGET  $RDS_USER@$RDS_HOST:$RDS_PORT/$RDS_DB"
+echo "        read from $SOURCE_FILE"
 echo
 echo "=== will be CLEARED ==="
 counts "$CLEARED"
@@ -123,4 +150,4 @@ else
 fi
 echo
 echo "Done. Restart the API so it reloads with a clean slate:"
-echo "  on 172.28.92.57 —  docker compose -f /opt/bc-inventory/deploy/backend/docker-compose.yml restart api"
+echo "  docker compose -f /opt/bc-inventory/deploy/backend/docker-compose.yml restart api"
