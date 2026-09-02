@@ -365,7 +365,9 @@ public static class Catalog
             "reports", new[] { "BC 4.1", "BC41" }),
         new("wip", "Laporan WIP", "WIP", Wip, WipDefaults, StockSearch, "movement",
             new[] { "WIP" }),
-        new("bahan-baku", "Laporan Bahan Baku", "BAHANBAKU", Mutasi, MutasiDefaults, StockSearch, "movement",
+        // Title is display only; "BAHAN BAKU" stays the hint, and survives the 31-char sheet-name
+        // truncation of the generated template, so a downloaded blank still round-trips.
+        new("bahan-baku", "Laporan Bahan Baku dan Bahan Penolong", "BAHANBAKU", Mutasi, MutasiDefaults, StockSearch, "movement",
             new[] { "BAHAN BAKU" }),
         new("barang-jadi", "Laporan Barang Jadi", "BARANGJADI", Mutasi, MutasiDefaults, StockSearch, "movement",
             new[] { "BARANG JADI" }),
