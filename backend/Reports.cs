@@ -27,6 +27,8 @@ public static class Reports
         title = r.Title,
         template = r.Template,
         page = r.Page,
+        upload = r.Upload,                              // owns an upload template
+        browse = r.Browse,                              // offered in the report picker
         defaults = r.Defaults,
         fields = r.Fields.Select(f => new
         {
@@ -54,7 +56,9 @@ public static class Reports
             if (!byName.ContainsKey(s.Field))
                 return (null, Results.Problem(statusCode: 400, title: "RPT-001", detail: $"Unknown sort field '{s.Field}'."));
 
-        var where = new StringBuilder("l.template = @template");
+        // A report may draw its rows from a predicate rather than a bare template match — one
+        // uploaded Aset dan Sparepart file is read as Sparepart, Aset and part of Bahan Baku.
+        var where = new StringBuilder(report.Where ?? "l.template = @template");
         var p = new DynamicParameters();
         p.Add("template", report.Template);
 

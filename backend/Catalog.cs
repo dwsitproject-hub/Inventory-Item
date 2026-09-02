@@ -185,6 +185,7 @@ public static class Catalog
     // ---------- Laporan WIP (work in progress stock) ----------
     public static readonly Field[] Wip =
     {
+        new("Tanggal Transaksi", FieldType.Date, "Transaksi"),
         new("Kode Barang", FieldType.Text, "Item"),
         new("Nama Barang", FieldType.Text, "Item"),
         new("Sat", FieldType.Text, "Item"),
@@ -195,6 +196,7 @@ public static class Catalog
     // ---------- Laporan Aset dan Sparepart (mutation) ----------
     public static readonly Field[] Aset =
     {
+        new("Tanggal Transaksi", FieldType.Date, "Transaksi"),
         new("Kode Barang", FieldType.Text, "Item"),
         new("Nama Barang", FieldType.Text, "Item"),
         new("Sat", FieldType.Text, "Item"),
@@ -208,9 +210,10 @@ public static class Catalog
         new("Keterangan", FieldType.Text, "Other"),
     };
 
-    // ---------- Laporan Bahan Baku / Barang Jadi (identical layout, 14 cols) ----------
+    // ---------- Laporan Bahan Baku / Barang Jadi (identical layout) ----------
     public static readonly Field[] Mutasi =
     {
+        new("Tanggal Transaksi", FieldType.Date, "Transaksi"),
         new("Kode Barang", FieldType.Text, "Item"),
         new("Nama Barang", FieldType.Text, "Item"),
         new("Sat", FieldType.Text, "Item"),
@@ -253,11 +256,12 @@ public static class Catalog
         new("Insurance", FieldType.Number, "Nilai Barang", "Nilai Asuransi"),
     };
 
-    public static readonly string[] WipDefaults = { "Kode Barang", "Nama Barang", "Sat", "Jumlah", "Keterangan" };
+    public static readonly string[] WipDefaults =
+        { "Tanggal Transaksi", "Kode Barang", "Nama Barang", "Sat", "Jumlah", "Keterangan" };
     public static readonly string[] AsetDefaults =
-        { "Kode Barang", "Nama Barang", "Sat", "Saldo Awal", "Pemasukan", "Pengeluaran", "Penyesuaian (Adj)", "Saldo Akhir", "Stock Opname", "Selisih" };
+        { "Tanggal Transaksi", "Kode Barang", "Nama Barang", "Sat", "Saldo Awal", "Pemasukan", "Pengeluaran", "Penyesuaian (Adj)", "Saldo Akhir", "Stock Opname", "Selisih" };
     public static readonly string[] MutasiDefaults =
-        { "Kode Barang", "Nama Barang", "Sat", "Saldo Awal", "Pemasukan", "Pemasukan WIP", "Pengeluaran", "Pengeluaran WIP", "Penyesuaian (Adj)", "Saldo Akhir", "Stock Opname", "Selisih" };
+        { "Tanggal Transaksi", "Kode Barang", "Nama Barang", "Sat", "Saldo Awal", "Pemasukan", "Pemasukan WIP", "Pengeluaran", "Pengeluaran WIP", "Penyesuaian (Adj)", "Saldo Akhir", "Stock Opname", "Selisih" };
     public static readonly string[] Bc30Defaults =
     {
         "Jenis Dok.", "Dok. Pabean / Nomor", "Dok. Pabean / Tanggal", "Penerima / Pembeli",
@@ -345,8 +349,30 @@ public static class Catalog
     /// NameHints disambiguate templates whose column headers are identical — the only signal
     /// left is the sheet or file name (Bahan Baku vs Barang Jadi; Aset dan Sparepart vs Scraps).
     /// </summary>
+    /// <param name="Where">
+    /// Row predicate over the line table alias <c>l</c>, replacing the default
+    /// <c>l.template = @template</c>. It exists so one uploaded file can feed more than one
+    /// report — Aset dan Sparepart is uploaded once and read as three separate reports.
+    /// These fragments are constants in this file and never built from user input.
+    /// </param>
+    /// <param name="Upload">
+    /// This report owns an upload template: it is offered as a blank download, listed on the
+    /// Ingestion page, and considered when identifying an uploaded file. Derived views set this
+    /// false — two reports claiming one template would make layout identification ambiguous.
+    /// </param>
+    /// <param name="Browse">Appears in the report picker on its page.</param>
     public record Report(string Key, string Title, string Template, Field[] Fields, string[] Defaults,
-                         string[] SearchFields, string Page = "reports", string[]? NameHints = null);
+                         string[] SearchFields, string Page = "reports", string[]? NameHints = null,
+                         string? Where = null, bool Upload = true, bool Browse = true);
+
+    // Kode Barang prefixes that route rows out of the file they arrived in. Sparepart is the 9xx
+    // range except 912; 912 is bahan penolong and is reported with Bahan Baku; everything else in
+    // the Aset dan Sparepart file is an asset. coalesce keeps a row with no Kode Barang visible
+    // in Aset rather than letting it vanish from every view.
+    private const string KodeBarang = "l.data->>'Kode Barang'";
+    private const string IsSparepart = $"({KodeBarang} like '9%' and {KodeBarang} not like '912%')";
+    private const string IsBahanPenolong = $"({KodeBarang} like '912%')";
+    private const string IsAset = $"(coalesce({KodeBarang}, '') not like '9%')";
 
     public static readonly Report[] Reports =
     {
@@ -367,13 +393,22 @@ public static class Catalog
             new[] { "WIP" }),
         // Title is display only; "BAHAN BAKU" stays the hint, and survives the 31-char sheet-name
         // truncation of the generated template, so a downloaded blank still round-trips.
+        // Also picks up the 912 (bahan penolong) rows that arrive inside the Aset dan Sparepart file.
         new("bahan-baku", "Laporan Bahan Baku dan Bahan Penolong", "BAHANBAKU", Mutasi, MutasiDefaults, StockSearch, "movement",
-            new[] { "BAHAN BAKU" }),
+            new[] { "BAHAN BAKU" },
+            Where: $"(l.template = 'BAHANBAKU' or (l.template = 'ASET' and {IsBahanPenolong}))"),
         new("barang-jadi", "Laporan Barang Jadi", "BARANGJADI", Mutasi, MutasiDefaults, StockSearch, "movement",
             new[] { "BARANG JADI" }),
+        // The vendor still produces ONE "Laporan Aset dan Sparepart" file, so this stays the upload
+        // template. It is not browsable: on the Inventory Movement page its rows are read as the two
+        // reports below, plus the 912 rows that go to Bahan Baku.
         new("aset-sparepart", "Laporan Aset dan Sparepart", "ASET", Aset, AsetDefaults, StockSearch, "movement",
-            new[] { "ASET", "SPAREPART" }),
-        // same 12-column layout as Aset dan Sparepart — told apart only by name
+            new[] { "ASET", "SPAREPART" }, Browse: false),
+        new("sparepart", "Laporan Sparepart", "ASET", Aset, AsetDefaults, StockSearch, "movement",
+            Where: $"(l.template = 'ASET' and {IsSparepart})", Upload: false),
+        new("aset", "Laporan Aset", "ASET", Aset, AsetDefaults, StockSearch, "movement",
+            Where: $"(l.template = 'ASET' and {IsAset})", Upload: false),
+        // same layout as Aset dan Sparepart — told apart only by name
         new("scraps", "Laporan Scraps", "SCRAP", Aset, AsetDefaults, StockSearch, "movement",
             new[] { "SCRAP" }),
     };

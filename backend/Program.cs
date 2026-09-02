@@ -97,6 +97,13 @@ api.MapGet("/reports/{key}/template", (string key, HttpContext ctx) =>
     var report = Catalog.Get(key);
     if (report is null)
         return Results.Problem(statusCode: 404, title: "RPT-001", detail: $"Unknown report key '{key}'.");
+    // A derived view has no upload template of its own — it reads rows from another report's file.
+    if (!report.Upload)
+    {
+        var owner = Catalog.Reports.First(r => r.Template == report.Template && r.Upload);
+        return Results.Problem(statusCode: 400, title: "RPT-002",
+            detail: $"{report.Title} is a view over {owner.Title}; upload that file instead.");
+    }
     var (bytes, name) = TemplateFiles.Build(report);
     Audit.Log("template.download", Auth.Scope(ctx.User), "report", key,
         $"Downloaded blank upload template for {report.Title}", null,

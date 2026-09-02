@@ -137,7 +137,7 @@ export default function Ingestion() {
               <th>Template</th><th>Report</th><th>Format</th><th>Fields</th><th>Appears in</th><th>Loaded</th><th>Blank template</th><th></th>
             </tr></thead>
             <tbody>
-              {catalog.map(r => {
+              {catalog.filter(r => r.upload).map(r => {
                 const loaded = files.filter(f => f.template === r.template && f.status !== 'failed')
                 const rows = loaded.reduce((s, f) => s + f.rowsLoaded, 0)
                 const fmt = r.template === 'BC23' ? 'TSV (.xls)' : r.template === 'BC40' ? 'HTML table (.xls)' : 'XLSX'

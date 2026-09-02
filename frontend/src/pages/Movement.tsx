@@ -5,7 +5,7 @@ export default function Movement() {
     <ReportBrowser
       page="movement"
       title="Inventory Movement"
-      crumb="Periodic stock &amp; mutation reports · WIP · Bahan Baku · Barang Jadi · Aset dan Sparepart"
+      crumb="Periodic stock &amp; mutation reports · WIP · Bahan Baku &amp; Penolong · Barang Jadi · Sparepart · Aset · Scraps"
       dateLabels={['Period from', 'Period to']}
       searchHint="e.g. 912.001.006, BLEACHING EARTH, RBDPO"
     />

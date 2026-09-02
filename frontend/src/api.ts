@@ -7,6 +7,10 @@ export type ReportMeta = {
   key: string; title: string; template: string
   /** which screen hosts it: 'reports' (customs documents) or 'movement' (inventory movement) */
   page: 'reports' | 'movement'
+  /** owns an upload template — offered as a blank download and listed on Ingestion */
+  upload: boolean
+  /** offered in the report picker on its page */
+  browse: boolean
   defaults: string[]; fields: FieldMeta[]
 }
 export type SortSpec = { field: string; dir: 'asc' | 'desc' }

@@ -25,7 +25,8 @@ export default function ReportBrowser({ page, title, crumb, dateLabels, searchHi
   useEffect(() => {
     reportCatalog()
       .then(all => {
-        const mine = all.filter(r => r.page === page)
+        // browse=false marks an upload template that is read through derived views instead
+        const mine = all.filter(r => r.page === page && r.browse)
         setCatalog(mine)
         setKey(k => (mine.some(r => r.key === k) ? k : mine[0]?.key ?? ''))
       })

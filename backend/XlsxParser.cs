@@ -127,7 +127,9 @@ public static class XlsxParser
             int bestMatched = 0;
             var tied = new List<string>();
 
-            foreach (var report in Catalog.Reports)
+            // Derived views share a template with the report that owns it; considering them here
+            // would make every such layout look ambiguous against itself.
+            foreach (var report in Catalog.Reports.Where(x => x.Upload))
             {
                 var byHeader = new Dictionary<string, Field>();
                 foreach (var f in report.Fields)
@@ -168,17 +170,17 @@ public static class XlsxParser
                 var hint = Norm($"{ws.Name} {fileName} {title}");
                 var pick = tied.FirstOrDefault(t =>
                 {
-                    var rep = Catalog.Reports.First(x => x.Template == t);
+                    var rep = Catalog.Reports.First(x => x.Template == t && x.Upload);
                     return (rep.NameHints ?? Array.Empty<string>()).Any(h => hint.Contains(Norm(h)));
                 });
                 if (pick is null)
                 {
-                    var titles = tied.Select(t => Catalog.Reports.First(x => x.Template == t).Title);
+                    var titles = tied.Select(t => Catalog.Reports.First(x => x.Template == t && x.Upload).Title);
                     throw new InvalidDataException(
                         $"This layout matches {string.Join(" and ", titles)} equally (identical column headers); " +
                         "the sheet name, file name or title row must say which report it is.");
                 }
-                best = best with { Report = Catalog.Reports.First(x => x.Template == pick) };
+                best = best with { Report = Catalog.Reports.First(x => x.Template == pick && x.Upload) };
             }
             return best;
         }
