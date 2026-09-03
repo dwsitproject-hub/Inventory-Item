@@ -43,7 +43,9 @@ public static class Reports
     {
         var report = Catalog.Get(key);
         if (report is null)
-            return (null, Results.Problem(statusCode: 400, title: "RPT-001", detail: $"Unknown report key '{key}'."));
+            // 404, matching the template endpoint: an unknown key is a missing resource, not a
+            // malformed request. The two endpoints used to disagree (finding F-01).
+            return (null, Results.Problem(statusCode: 404, title: "RPT-001", detail: $"Unknown report key '{key}'."));
 
         var byName = report.Fields.ToDictionary(f => f.Name);
         var columns = (req.Columns is { Length: > 0 } ? req.Columns : report.Defaults).Distinct().ToArray();
@@ -154,5 +156,19 @@ public static class Reports
         });
     }
 
-    public static string Sql(string name) => name.Replace("'", "''");
+    /// <summary>
+    /// Quote a catalogue field name for embedding in SQL. The whitelist against the report's
+    /// own fields is the real control; this is the second line (AR-09). It refuses anything
+    /// that does not look like a field name rather than trying to sanitise it, so a code path
+    /// that ever forgets the whitelist fails loudly instead of building injectable SQL.
+    /// </summary>
+    public static string Sql(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
+            throw new ArgumentException("Field name out of range.", nameof(name));
+        foreach (var c in name)
+            if (!(char.IsLetterOrDigit(c) || c is ' ' or '.' or '/' or '-' or '_' or '(' or ')' or '%' or '"' or '\''))
+                throw new ArgumentException($"Field name contains an unexpected character: {name}", nameof(name));
+        return name.Replace("'", "''");
+    }
 }

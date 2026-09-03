@@ -145,6 +145,10 @@ public static class Db
                 read_at timestamptz,
                 unique (notification_id, user_id)
             );
+            -- Bumped whenever an administrator disables, re-enables or resets an account, which
+            -- retires every token issued before that moment (AR-01).
+            alter table auth.users add column if not exists tokens_valid_from timestamptz not null default now();
+
             alter table app.notification_deliveries add column if not exists email_status text;
             alter table app.notification_deliveries add column if not exists email_error text;
             -- A recipient may want a notification by e-mail but not in the bell. The row is still
@@ -194,6 +198,13 @@ public static class Db
             create trigger trg_audit_no_mutation
                 before update or delete on audit.audit_events
                 for each row execute function audit.no_mutation();
+
+            -- A row trigger never sees TRUNCATE, so the append-only guarantee had a way around
+            -- it: one statement emptied the whole trail without tripping the guard (AR-08).
+            drop trigger if exists trg_audit_no_truncate on audit.audit_events;
+            create trigger trg_audit_no_truncate
+                before truncate on audit.audit_events
+                for each statement execute function audit.no_mutation();
             """);
     }
 

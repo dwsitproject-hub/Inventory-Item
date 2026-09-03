@@ -49,8 +49,8 @@ public static class Admin
             return Results.Problem(statusCode: 403, title: "AUTH-003", detail: "Only a Super Admin can grant all-entities scope.");
         if (!req.AllEntities && req.EntityId is null)
             return Results.Problem(statusCode: 400, title: "VAL-001", detail: "entityId required unless allEntities.");
-        if ((req.Password ?? "").Length < 8)
-            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "Password must be at least 8 characters.");
+        if (Passwords.Check(req.Password, req.Email) is { } pwErr)
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: pwErr);
 
         await using var con = await ds.OpenConnectionAsync();
         var dup = await con.ExecuteScalarAsync<long?>(
@@ -79,9 +79,13 @@ public static class Admin
             return Results.Problem(statusCode: 400, title: "VAL-001", detail: "You cannot disable your own account.");
 
         await using var con = await ds.OpenConnectionAsync();
+        // tokens_valid_from retires every token issued before now, so disabling an account ends
+        // the sessions it already has rather than waiting up to 8 hours for them to expire (AR-01).
         var email = await con.ExecuteScalarAsync<string?>(
-            "update auth.users set status = @s where id = @id returning email", new { s = req.Status, id });
+            "update auth.users set status = @s, tokens_valid_from = now() where id = @id returning email",
+            new { s = req.Status, id });
         if (email is null) return Results.Problem(statusCode: 404, title: "VAL-001", detail: "User not found.");
+        Sessions.Invalidate(id);
 
         await Notifications.Emit(con, "security", $"User {req.Status} — {email}", $"By {scope.Email}");
         Audit.Log("admin.user.status", scope, "user", id.ToString(), $"Set {email} to {req.Status}",
@@ -92,13 +96,16 @@ public static class Admin
     public static async Task<IResult> ResetPassword(NpgsqlDataSource ds, UserScope scope, long id, ResetPasswordRequest req)
     {
         if (await RequireAdmin(scope, "edit") is { } err) return err;
-        if ((req.Password ?? "").Length < 8)
-            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "Password must be at least 8 characters.");
         await using var con = await ds.OpenConnectionAsync();
+        var target = await con.ExecuteScalarAsync<string?>("select email from auth.users where id = @id", new { id });
+        if (target is null) return Results.Problem(statusCode: 404, title: "VAL-001", detail: "User not found.");
+        if (Passwords.Check(req.Password, target) is { } pwErr)
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: pwErr);
+        // A reset must end the sessions the old password left behind (AR-01).
         var email = await con.ExecuteScalarAsync<string?>(
-            "update auth.users set password_hash = @h where id = @id returning email",
+            "update auth.users set password_hash = @h, tokens_valid_from = now() where id = @id returning email",
             new { h = BCrypt.Net.BCrypt.HashPassword(req.Password, 11), id });
-        if (email is null) return Results.Problem(statusCode: 404, title: "VAL-001", detail: "User not found.");
+        Sessions.Invalidate(id);
         await Notifications.Emit(con, "security", $"Password reset — {email}", $"By {scope.Email}");
         Audit.Log("admin.user.reset", scope, "user", id.ToString(), $"Reset password for {email}", new { email });
         return Results.Ok(new { id });

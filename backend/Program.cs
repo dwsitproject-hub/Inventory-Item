@@ -40,11 +40,53 @@ builder.Services
         o.MapInboundClaims = false;
     });
 builder.Services.AddAuthorization();
-builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+builder.Services.AddHttpContextAccessor();
+// AR-04: the front end is served from the same origin as the API in every deployment, so no
+// cross-origin access is needed by default. Set Cors:Origins (comma separated) only if a client
+// really is hosted elsewhere; an open policy let any website call this API directly.
+var corsOrigins = (builder.Configuration["Cors:Origins"] ?? "")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+{
+    if (corsOrigins.Length > 0) p.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod();
+    else p.WithOrigins("http://localhost:8088").AllowAnyHeader().AllowAnyMethod();
+}));
 
 var app = builder.Build();
+Auth.Configure(app.Services.GetRequiredService<IHttpContextAccessor>());
 app.UseCors();
 app.UseAuthentication();
+
+// AR-01 — the session guard. A token proves who signed in; it does not decide what they may do
+// now. Every authenticated request re-reads the account, so disabling it, demoting the role,
+// narrowing the entity scope or resetting the password takes effect within seconds instead of
+// surviving until the token expires up to eight hours later.
+app.Use(async (ctx, next) =>
+{
+    if (ctx.User?.Identity?.IsAuthenticated == true)
+    {
+        var (outcome, scope) = await Sessions.Resolve(ds, ctx.User);
+        if (outcome != Sessions.Outcome.Ok || scope is null)
+        {
+            var detail = outcome switch
+            {
+                Sessions.Outcome.Disabled => "This account has been disabled. Sign in again if you believe this is wrong.",
+                Sessions.Outcome.TokenSuperseded => "Your session ended because the account was changed. Please sign in again.",
+                _ => "Your session is no longer valid. Please sign in again."
+            };
+            Audit.Log("auth.session.rejected", null, "user", ctx.User.FindFirst("sub")?.Value,
+                $"Session refused: {outcome}", new { outcome = outcome.ToString() },
+                ctx.Connection.RemoteIpAddress?.ToString(),
+                actorEmailOverride: ctx.User.FindFirst("email")?.Value);
+            ctx.Response.StatusCode = 401;
+            await ctx.Response.WriteAsJsonAsync(new { title = "AUTH-002", status = 401, detail });
+            return;
+        }
+        ctx.Items[Auth.ScopeItemKey] = scope;
+    }
+    await next();
+});
+
 app.UseAuthorization();
 
 // ---------- bootstrap: schema, seed, auto-ingest samples ----------

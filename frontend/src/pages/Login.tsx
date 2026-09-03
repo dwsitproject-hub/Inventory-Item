@@ -45,10 +45,15 @@ export default function Login() {
         <button className="btn p" style={{ width: '100%', marginTop: 6 }} disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        <div className="note" style={{ marginTop: 16 }}>
-          Test accounts: <b>admin@energi-up.com</b> / Admin123! (Super Admin) ·{' '}
-          <b>bc.bontang@energi-up.com</b> / Bontang123! (Site BC, scope-locked)
-        </div>
+        {/* Local development only. On any networked deployment this handed an attacker two
+            valid usernames and their passwords (AR-14). import.meta.env.DEV is false in the
+            production build that ships to staging. */}
+        {import.meta.env.DEV && (
+          <div className="note" style={{ marginTop: 16 }}>
+            Test accounts: <b>admin@energi-up.com</b> / Admin123! (Super Admin) ·{' '}
+            <b>bc.bontang@energi-up.com</b> / Bontang123! (Site BC, scope-locked)
+          </div>
+        )}
       </form>
     </div>
   )

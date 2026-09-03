@@ -14,6 +14,8 @@ services:
       # account whose names differ from the self-managed ones.
       ConnectionStrings__Db: "Host=${DB_HOST:-172.28.92.60};Port=${DB_PORT:-5443};Database=${DB_NAME:-bcinventory};Username=${DB_USER:-bcapp};Password=${DB_PASSWORD:?set DB_PASSWORD in .env};SSL Mode=${DB_SSLMODE:-Prefer};Trust Server Certificate=true;Maximum Pool Size=25;Timeout=15;Command Timeout=60"
       Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env — 32+ random chars}
+      Jwt__LifetimeMinutes: ${JWT_LIFETIME_MINUTES:-120}
+      Cors__Origins: ${CORS_ORIGINS:-}
       # First-run only: initial passwords for the two seeded accounts.
       Seed__AdminPassword: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
       Seed__SitePassword: ${SEED_SITE_PASSWORD:?set SEED_SITE_PASSWORD in .env}
@@ -23,6 +25,9 @@ services:
       Smtp__Host: ${SMTP_HOST:-}
       Smtp__Port: ${SMTP_PORT:-25}
       Smtp__From: ${SMTP_FROM:-bc-inventory@energi-up.com}
+      Smtp__UseTls: ${SMTP_USE_TLS:-true}
+      Smtp__User: ${SMTP_USER:-}
+      Smtp__Password: ${SMTP_PASSWORD:-}
       # Sample auto-ingest is demo data — leave unmounted so staging starts empty.
       SampleData__Dir: ${SAMPLE_DIR:-/samples}
       ASPNETCORE_URLS: http://+:8080
@@ -34,7 +39,8 @@ services:
     volumes:
       # Uncomment to seed staging with the sample extracts on first start:
       # - ../../docs:/samples:ro
-      - bcinv_dpkeys:/root/.aspnet/DataProtection-Keys
+      # The API runs as the unprivileged bcinv user (AR-07), so its keys live in that home.
+      - bcinv_dpkeys:/home/bcinv/.aspnet/DataProtection-Keys
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/v1/health || exit 1"]
       interval: 15s
