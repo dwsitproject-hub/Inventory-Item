@@ -8,20 +8,36 @@
 -- Run this ONCE as the privileged account, then set DB_USER / DB_PASSWORD in
 -- deploy/backend/.env to the new role and recreate the API container.
 --
---   psql -h <endpoint> -U <privileged account> -d bcinventory -f create-app-role.sql
+-- The password for the new role is supplied on the command line, NOT edited into this file:
+-- this file is tracked in git, and a secret typed in here is one careless commit away from
+-- being public. It is a NEW password you choose — not the privileged account's password,
+-- which is only used to authenticate this run.
 --
--- Choose a password before running and substitute it below; do not leave the placeholder.
+--   psql -h <endpoint> -U <privileged account> -d bcinventory \
+--        -v app_password="'<the new password>'" -f create-app-role.sql
+--
+-- Note the doubled quoting: the shell strips the outer pair, psql needs the inner pair so the
+-- value arrives as a SQL string literal.
+--
+-- Then set DB_USER=bcapp_rw and DB_PASSWORD=<the same password> in deploy/backend/.env and
+-- recreate the API container.
 
-\set app_password 'CHANGE_ME_BEFORE_RUNNING'
+\if :{?app_password}
+\else
+\echo '>>> STOP: no password supplied.'
+\echo '>>> Re-run with:  -v app_password="''<the new password>''"'
+\quit
+\endif
 
-do $$
-begin
-  if not exists (select 1 from pg_roles where rolname = 'bcapp_rw') then
-    execute format('create role bcapp_rw login password %L', :'app_password');
-  else
-    execute format('alter role bcapp_rw password %L', :'app_password');
-  end if;
-end $$;
+-- Built and executed with \gexec rather than inside a DO block: psql does not interpolate
+-- :variables inside dollar-quoted strings, so the password would arrive as literal text.
+select format('create role bcapp_rw login password %L', :'app_password')
+where not exists (select 1 from pg_roles where rolname = 'bcapp_rw')
+\gexec
+
+-- Runs either way, so re-running the script also rotates the password.
+select format('alter role bcapp_rw login password %L', :'app_password')
+\gexec
 
 -- No superuser, no role creation, no database creation. Stated explicitly so a later
 -- "grant it everything to make the error go away" is a visible change rather than a default.
