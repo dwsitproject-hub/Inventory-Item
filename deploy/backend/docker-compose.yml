@@ -42,6 +42,10 @@ services:
       # Uncomment to seed staging with the sample extracts on first start:
       # - ../../docs:/samples:ro
       # The API runs as the unprivileged bcinv user (AR-07), so its keys live in that home.
+      # Upgrading an environment that ran as root leaves this volume owned by root and the
+      # new user cannot read it — harmless (nothing here is load bearing; the JWT uses
+      # JWT_KEY) but it logs a DataProtection error on every start. Clear it once with:
+      #   docker run --rm -v bc-inventory-api_bcinv_dpkeys:/k alpine chown -R 100:101 /k
       - bcinv_dpkeys:/home/bcinv/.aspnet/DataProtection-Keys
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/api/v1/health || exit 1"]
