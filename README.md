@@ -1,10 +1,14 @@
-# BC Inventory Reporting System — local Docker test build
+# BC Inventory Reporting System
 
-Vertical-slice MVP of the system specified in `docs/BC_Inventory_System_TechDoc_v1.1.docx`
-(React SPA + ASP.NET Core 8 API + PostgreSQL 16). Field names everywhere are the exact
-upload template headers (PRD v1.2, Appendices D & E).
+Customs inventory reporting for a bonded zone (TPB / Pusat Logistik Berikat), replacing the
+legacy Web IT Inventory / BC Reports. Vendor customs and stock extracts are uploaded, parsed
+into a common model, and browsed as governed reports with column control, sorting, export,
+reconciliation and an append-only audit trail.
 
-## Run
+React SPA + ASP.NET Core 8 API + PostgreSQL 16 (ApsaraDB RDS in staging). Field names everywhere
+are the exact upload-template headers (PRD, Appendices D & E).
+
+## Run locally
 
 ```bash
 docker compose up --build -d
@@ -17,85 +21,130 @@ Then open **http://localhost:8088**
 | admin@energi-up.com | Admin123! | Super Admin, all entities |
 | bc.bontang@energi-up.com | Bontang123! | Site BC User, PT EUP · Bontang (scope-locked) |
 
-On first startup the API auto-ingests the real sample extracts from `docs/` through the real
-parser pipeline, so every screen is populated immediately.
+These local-dev defaults, and the credential hint on the sign-in page, appear **only in a
+development build**. A production build hides both. On first startup the API auto-ingests the
+sample extracts from `docs/` through the real parser pipeline, so every screen is populated.
 
-| Template | File | Real format | Appears in |
+## Reports
+
+Fourteen reports across two pages. Twelve own an upload template; two (Laporan Sparepart and
+Laporan Aset) are **views** over the Aset dan Sparepart upload rather than separate files.
+
+| Report | Template | Page | Format / note |
 |---|---|---|---|
-| BC23 | BC23 Report.xls | tab-separated text | Reports |
-| BC40 | BC40 Report.xls | HTML table | Reports |
-| BC30 | Laporan BC3.0.xlsx | XLSX, 2-row merged header | Reports |
-| WIP | Laporan WIP.xlsx | XLSX | Inventory Movement |
-| BAHANBAKU | Laporan Bahan Baku.xlsx | XLSX | Inventory Movement |
-| BARANGJADI | Laporan Barang Jadi.xlsx | XLSX | Inventory Movement |
-| ASET | Laporan Aset dan Sparepart.xlsx | XLSX | Inventory Movement |
-| SCRAP | Laporan Scraps ….xlsx | XLSX | Inventory Movement |
-| BC27IN | Laporan BC 2.7 In.xlsx | XLSX | Reports |
-| BC27OUT | Laporan BC 2.7 Out.xlsx | XLSX | Reports |
-| BC25 | Laporan BC 2.5 Out.xlsx | XLSX | Reports |
-| BC41 | Laporan BC 4.1 Out.xlsx | XLSX | Reports |
+| Pemasukan Barang — PIB Import (BC 2.3) | BC23 | Reports | tab-separated text (.xls) |
+| Pemasukan Barang — BC 4.0 | BC40 | Reports | HTML table (.xls) |
+| Pengeluaran Barang — BC 3.0 (PEB) | BC30 | Reports | XLSX, 2-row merged header |
+| Pemasukan Barang — BC 2.7 | BC27IN | Reports | XLSX |
+| Pengeluaran Barang — BC 2.7 | BC27OUT | Reports | XLSX — shared layout |
+| Pengeluaran Barang — BC 2.5 | BC25 | Reports | XLSX — shared layout |
+| Pengeluaran Barang — BC 4.1 | BC41 | Reports | XLSX — shared layout |
+| Laporan WIP | WIP | Inventory Movement | XLSX |
+| Laporan Bahan Baku dan Bahan Penolong | BAHANBAKU | Inventory Movement | XLSX; also shows Kode Barang 912 from the Aset file |
+| Laporan Barang Jadi | BARANGJADI | Inventory Movement | XLSX — shared layout with Bahan Baku |
+| Laporan Aset dan Sparepart | ASET | (upload only) | XLSX upload template; read as the two views below |
+| Laporan Sparepart | ASET (view) | Inventory Movement | Kode Barang 9xx except 912 |
+| Laporan Aset | ASET (view) | Inventory Movement | Kode Barang not starting with 9 |
+| Laporan Scraps | SCRAP | Inventory Movement | XLSX — shared layout with Aset dan Sparepart |
 
-Templates are identified from the file's own header row, not its name or extension. Several groups
-share a byte-identical layout — Bahan Baku / Barang Jadi (14 columns), Aset dan Sparepart /
-Scraps (12 columns), and BC 2.7 Out / BC 2.5 Out / BC 4.1 Out (19 columns) — so those fall back
-to the sheet name, file name or title row; when none of them names the report the upload is
-rejected with an explanation rather than guessed at. The Ingestion page lists every supported template with its expected
-columns and how many rows are loaded, and offers a **blank .xlsx template** per report
-(`⭳ .xlsx`) for users to fill in and upload back. Each template ships with a "Petunjuk" sheet
-documenting every column; columns are matched by header text, so they may be reordered.
+**Aset / Sparepart routing.** The vendor uploads one *Laporan Aset dan Sparepart* file; its rows
+are split by Kode Barang prefix — `9xx` except `912` → Sparepart, `912` (bahan penolong) →
+Bahan Baku dan Bahan Penolong, everything else → Aset. A row with no code stays in Aset rather
+than vanishing. The three views always reconcile to the uploaded row count.
 
-## Services
+**Template identification.** Templates are identified from the file's own header row, not its name
+or extension. Byte-identical layouts — Bahan Baku / Barang Jadi, Aset dan Sparepart / Scraps, and
+BC 2.7 Out / BC 2.5 Out / BC 4.1 Out — fall back to the sheet name, file name or title row; when
+none names the report the upload is rejected with an explanation rather than guessed. The five
+movement templates carry a leading **Tanggal Transaksi** column. The Ingestion page lists every
+upload template with its columns and load count, and offers a blank `.xlsx` per report (with a
+"Petunjuk" sheet) to fill in and upload back; columns match by header text and may be reordered.
+
+## What's implemented
+
+- **Auth & sessions** — JWT login (BCrypt), role + entity/site scope enforced server-side. Every
+  request re-reads the account, so disabling it, demoting the role, narrowing scope or resetting
+  the password ends the session within seconds rather than at token expiry. Token lifetime 120 min
+  (configurable). Sign-in is rate-limited with per-account lockout.
+- **Reports & movement** — catalog + query endpoint: column projection, multi-sort, server-side
+  paging, scope filter, search; field names verbatim from the upload headers. Grid: column chooser,
+  click / Shift-click sort, drag-and-drop reorder, page size, saved views per user per report.
+- **Ingestion** — format sniffing by content (BC23 TSV, BC40 HTML, XLSX), header-fingerprint
+  identification, quarantine with reasons, duplicate-hash idempotency, per-period upsert, manual
+  upload with a 100 MB cap.
+- **Dashboard** — KPIs (entity-scoped), per-month trend by template, latest ingestions.
+- **Exports** — Excel (.xlsx, typed cells, text identifiers keep leading zeros) and CSV, honouring
+  the grid's visible columns, order and sort. Indonesian number and date formatting throughout.
+- **Notifications** — in-app bell + e-mail. Per-user, per-event routing managed in Administration →
+  Notifications: each user × event (File ingested / Rows quarantined / Ingestion failed / Security)
+  with independent in-app and e-mail channels; users with no explicit setting fall back to the
+  event's default roles. E-mail is sent over STARTTLS when a relay is configured.
+- **Admin** — user management (create with role + scope, disable/enable, password reset; no hard
+  delete), master data (entities / sites / TPB permits) with duplicate and test-entry blocking,
+  role management (role × page × view/insert/edit matrix), notification routing. Password policy:
+  ≥10 chars, some variety, no obvious words or the account's own address.
+- **Audit** — append-only `audit.audit_events`, enforced by database triggers that reject UPDATE,
+  DELETE **and** TRUNCATE. Records logins (incl. failures with reason + IP), session rejections,
+  report runs, exports, ingestion events, and every user / master-data / permission change. Viewer
+  with date / actor / action / text filters and CSV export.
+- **LPM / Reconciliation** — saldo per material per month (opening + in − out − adj = closing) and
+  BC 4.0 goods-receipt variance flags with a tolerance check.
+
+## Security posture
+
+The security architecture review and its remediation are in
+`docs/BC_Inventory_Security_Review_and_Pentest_Plan_v1.1.docx`; the executed pentest is in
+`docs/BC_Inventory_Pentest_Execution_Report_Staging_v1.0.docx`. Highlights as built:
+
+- Authorization is re-validated from the database per request (a token proves identity only).
+- Login throttling with per-account lockout; a ≥10-char password policy.
+- CORS restricted to configured origins; security response headers (CSP, X-Frame-Options,
+  nosniff, Referrer-Policy) served by nginx; server version suppressed.
+- The API container runs as an unprivileged user; the application connects to the database as a
+  least-privilege role (`bcapp_rw`) that cannot delete from or unprotect the audit trail.
+- `deploy/harden.sh` checks host secrets, file permissions and the container user;
+  `deploy/scan-dependencies.sh` scans NuGet, npm and the images.
+- **TLS is not yet enabled on staging** (an accepted decision); a ready-to-enable block ships in
+  `deploy/frontend/host-nginx-vhost.conf`. It is mandatory before production.
+
+## Deployment
+
+Staging is three hosts — frontend (172.28.92.56), backend (172.28.92.57) and the database, now
+**ApsaraDB RDS for PostgreSQL**. See `docs/DEPLOYMENT.md` and `docs/DB_Migration_to_ApsaraDB.md`.
+
+- Each tier redeploys with `deploy/update.sh {db|backend|frontend}` (pull + rebuild + restart).
+- The application runs as the least-privilege DB role, which may **not** alter the schema, so set
+  `DB_AUTO_MIGRATE=false` in `deploy/backend/.env`. Apply schema changes with an owner account:
+  `DB_USER=<owner> DB_PASSWORD=<owner-pw> DB_AUTO_MIGRATE=true docker compose run --rm api --migrate`.
+- Clear transaction data between test cycles (keeping users, roles and master data) with
+  `deploy/db/reset-transaction-data.sh`.
+
+Key settings in `deploy/backend/.env` (see `.env.example`): `DB_HOST/PORT/NAME/USER/PASSWORD`,
+`DB_SSLMODE`, `DB_AUTO_MIGRATE`, `JWT_KEY`, `JWT_LIFETIME_MINUTES`, `CORS_ORIGINS`,
+`SMTP_HOST/PORT/FROM/USE_TLS/USER/PASSWORD`.
+
+## Services (local)
 
 | Service | Port | Notes |
 |---|---|---|
-| web (nginx + React build) | 8088 | serves the SPA, proxies `/api` to the API |
-| api (ASP.NET Core 8) | — (internal 8080) | JWT auth, report query engine, ingestion |
-| db (PostgreSQL 16) | 5442 (host) | user `bcapp`, db `bcinventory` — 5433–5440 are used by other local projects |
-| mail (Mailpit) | 8025 | local inbox UI for the alert e-mails (SMTP internal :1025) |
+| web (nginx + React) | 8088 | serves the SPA, proxies `/api` to the API, sets security headers |
+| api (ASP.NET Core 8) | internal 8080 | JWT auth, query engine, ingestion; runs as unprivileged `bcinv` |
+| db (PostgreSQL 16) | 5442 (host) | user `bcapp`, db `bcinventory` |
+| mail (Mailpit) | 8025 | local inbox for alert e-mails |
 
-## What's implemented (vs TechDoc)
+## Documentation
 
-- JWT login (local accounts, BCrypt), role + entity/site scope enforced server-side
-- Report catalog + query endpoint: column projection, multi-sort, server-side paging,
-  scope filter, search — field names verbatim from the upload headers
-- Reports grid: column chooser (all 80/55 stored fields), click/Shift+click sort,
-  drag-and-drop column reorder, reset, page-size control, elapsed-ms display
-- Ingestion: format sniffing by content (FR-I8), BC23 TSV parser + BC40 HTML parser
-  (merged headers, continuation rows, footer totals, `="…"` text guards — FR-I9/I11),
-  quarantine with reasons (FR-I5), duplicate-hash idempotency (FR-I6), manual upload
-- Dashboard: KPIs, per-month trend by template, latest ingestions
-- Exports (FR-R5/R13): Excel (.xlsx, styled, typed cells, text identifiers keep leading
-  zeros) and CSV — both honour the grid's visible columns, order and sort
-- Saved views (FR-R12): the grid layout auto-persists per user per report and restores on
-  return; named views can be saved, applied and deleted
-- Notifications (FR-N subset): in-app bell with unread badge; upload/quarantine/error
-  events emitted by the ingestion pipeline (role-targeted), mark-as-read; 30 s polling
-- E-mail channel (FR-N1/N6): every alert also goes out via SMTP with per-recipient
-  delivery status recorded — inspect at http://localhost:8025 (Mailpit)
-- Admin module (FR-A1/A3/A4): user management (create with role+scope, disable/enable,
-  password reset — no hard delete), master data (entities/sites/TPB permits) with
-  duplicate + test-entry blocking ("TESTING" is rejected); security-change alerts
-- Role Management (FR-A2): configurable role × page × (view/insert/edit) matrix, seeded from
-  the PRD §6.4 capability table. Enforced by the API — a revoked page returns 403 even when
-  called directly — and mirrored in the UI (nav items, export and upload buttons). Two
-  invariants: Super Admin always keeps full access and its row is immutable, and only a
-  Super Admin may edit the matrix (an Admin raising its own rights would be escalation).
-  Every change is audited and alerts administrators.
-- Audit log (FR-A7): append-only `audit.audit_events` — the table rejects UPDATE/DELETE
-  via a database trigger, not just application code. Records logins (incl. failures with
-  reason + IP), report runs, exports, ingestion loads/duplicates/failures, user and
-  master-data changes, each with a JSON detail payload. Viewer page (Super Admin / Admin /
-  Auditor) with date, actor, action and full-text filters, expandable detail, and CSV export
-- LPM / Reconciliation (FR-R8): saldo per material per month
-  (opening + in − out − adj = closing) and BC 4.0 goods-receipt variance flags with
-  tolerance check (outbound legs are 0 until outbound extracts are specified)
-
-## MVP simplifications (documented deviations from the TechDoc)
-
-- Upload fields live in one `data jsonb` column per line (exact-name keys) instead of
-  typed extension tables; the field catalog casts on read. Swap-in planned at build-out.
-- Offset paging (fine at test volume) instead of keyset; single seeded entity;
-  no SSO/MFA/alerting/exports yet; JWT in sessionStorage (production: httpOnly refresh).
+| Document | What it is |
+|---|---|
+| `docs/BC_Inventory_System_PRD_v1.3.docx` | Product requirements — current system |
+| `docs/BC_Inventory_System_TechDoc_v1.1.docx` | Technical design |
+| `docs/BC_Inventory_User_Manual_{EN,ID}.docx` | End-user guide (English / Bahasa Indonesia) |
+| `docs/BC_Inventory_Admin_Manual_{EN,ID}.docx` | Administrator guide (English / Bahasa Indonesia) |
+| `docs/BC_Inventory_E2E_Test_Scenarios_v1.0.docx` | Functional test pack |
+| `docs/BC_Inventory_E2E_Test_Results_v1.0.docx` | Functional test execution report |
+| `docs/BC_Inventory_Security_Review_and_Pentest_Plan_v1.1.docx` | Security review + pentest plan |
+| `docs/BC_Inventory_Pentest_Execution_Report_Staging_v1.0.docx` | Pentest execution report |
+| `docs/DEPLOYMENT.md`, `docs/DB_Migration_to_ApsaraDB.md` | Deployment & DB migration runbooks |
 
 ## Useful commands
 
@@ -104,3 +153,10 @@ docker compose logs -f api        # watch ingestion / query logs
 docker compose down               # stop (keeps DB volume)
 docker compose down -v            # stop and wipe the database
 ```
+
+## MVP simplifications (documented deviations from the TechDoc)
+
+- Upload fields live in one `data jsonb` column per line (exact-name keys) rather than typed
+  extension tables; the field catalog casts on read.
+- Offset paging (fine at test volume) rather than keyset; JWT held in sessionStorage
+  (production hardening: httpOnly refresh token) — see the security review.
