@@ -15,6 +15,8 @@ services:
       ConnectionStrings__Db: "Host=${DB_HOST:-172.28.92.60};Port=${DB_PORT:-5443};Database=${DB_NAME:-bcinventory};Username=${DB_USER:-bcapp};Password=${DB_PASSWORD:?set DB_PASSWORD in .env};SSL Mode=${DB_SSLMODE:-Prefer};Trust Server Certificate=true;Maximum Pool Size=25;Timeout=15;Command Timeout=60"
       Jwt__Key: ${JWT_KEY:?set JWT_KEY in .env — 32+ random chars}
       Jwt__LifetimeMinutes: ${JWT_LIFETIME_MINUTES:-120}
+      # false when DB_USER is the least-privilege role, which may not alter the schema.
+      Db__AutoMigrate: ${DB_AUTO_MIGRATE:-true}
       Cors__Origins: ${CORS_ORIGINS:-}
       # First-run only: initial passwords for the two seeded accounts.
       Seed__AdminPassword: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}

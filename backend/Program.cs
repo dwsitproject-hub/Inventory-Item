@@ -90,12 +90,23 @@ app.Use(async (ctx, next) =>
 app.UseAuthorization();
 
 // ---------- bootstrap: schema, seed, auto-ingest samples ----------
-await Db.EnsureCreated(ds);
+// The application normally runs with an account that may not alter the schema (AR-06), so
+// schema changes are applied deliberately with --migrate rather than on every start.
+var autoMigrate = !string.Equals(app.Configuration["Db:AutoMigrate"], "false", StringComparison.OrdinalIgnoreCase);
+var migrateOnly = args.Contains("--migrate");
+
+await Db.EnsureCreated(ds, autoMigrate || migrateOnly);
 Audit.Configure(ds);                 // before Seed, so a startup password reset is audited
 Notifications.Configure(ds, app.Configuration);
 await Db.Seed(ds, app.Configuration);
 Permissions.Configure(ds);
 await Permissions.EnsureSeeded(ds);
+
+if (migrateOnly)
+{
+    Console.WriteLine("[migrate] schema applied and seeded — exiting without serving.");
+    return;
+}
 _ = Task.Run(async () =>
 {
     try { await Ingestion.AutoIngestSamples(ds, app.Configuration["SampleData:Dir"] ?? "/samples"); }

@@ -14,10 +14,12 @@
 -- which is only used to authenticate this run.
 --
 --   psql -h <endpoint> -U <privileged account> -d bcinventory \
---        -v app_password="'<the new password>'" -f create-app-role.sql
+--        -v app_password='<the new password>' -f create-app-role.sql
 --
--- Note the doubled quoting: the shell strips the outer pair, psql needs the inner pair so the
--- value arrives as a SQL string literal.
+-- Pass the password BARE, in ordinary shell quotes. The shell strips those and psql receives
+-- the plain value; this script quotes it for SQL itself. A second pair of quotes would be
+-- stored AS PART OF the password — the application then cannot sign in, and the reason is
+-- almost invisible afterwards. The script refuses that case below.
 --
 -- Then set DB_USER=bcapp_rw and DB_PASSWORD=<the same password> in deploy/backend/.env and
 -- recreate the API container.
@@ -25,7 +27,18 @@
 \if :{?app_password}
 \else
 \echo '>>> STOP: no password supplied.'
-\echo '>>> Re-run with:  -v app_password="''<the new password>''"'
+\echo '>>> Re-run with:  -v app_password=<the new password>   (bare, no extra quotes)'
+\quit
+\endif
+
+-- Catch a value that arrives already wrapped in quotes. That happens with
+--   -v app_password="'secret'"
+-- and the quotes would silently become part of the password: the role is created, the script
+-- reports success, and the application then fails authentication on every start.
+select (:'app_password' like '''%' or :'app_password' like '"%') as bad_quoting \gset
+\if :bad_quoting
+\echo '>>> STOP: the password starts with a quote character.'
+\echo '>>> Pass it bare:  -v app_password=secret     not  -v app_password="''secret''"'
 \quit
 \endif
 

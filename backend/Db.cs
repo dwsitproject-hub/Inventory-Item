@@ -5,8 +5,41 @@ namespace BcInventory.Api;
 
 public static class Db
 {
-    public static async Task EnsureCreated(NpgsqlDataSource ds)
+    /// <summary>
+    /// Applies the schema, or verifies it is already there.
+    ///
+    /// Creating and altering tables needs rights the running application should not hold: a
+    /// least-privilege account cannot ALTER a table it does not own, and cannot CREATE SCHEMA
+    /// without rights over the whole database. Granting those back would hand the application
+    /// the ability to drop its own audit trigger, which is the point of restricting it (AR-06).
+    ///
+    /// So migrating and running are separate jobs. With autoMigrate off the application only
+    /// checks the schema is present and refuses to start if it is not, rather than failing
+    /// obscurely on the first query. Apply schema changes with: dotnet BcInventory.Api.dll --migrate
+    /// using an account that owns the tables.
+    /// </summary>
+    public static async Task EnsureCreated(NpgsqlDataSource ds, bool autoMigrate = true)
     {
+        if (!autoMigrate)
+        {
+            await using var check = await ds.OpenConnectionAsync();
+            var ready = await check.ExecuteScalarAsync<bool>(
+                "select to_regclass('auth.users') is not null and to_regclass('audit.audit_events') is not null");
+            if (!ready)
+                throw new InvalidOperationException(
+                    "The database schema is missing and this account is not allowed to create it. " +
+                    "Run the API once with --migrate using an account that owns the tables, then start normally.");
+            var hasCol = await check.ExecuteScalarAsync<bool>(
+                "select exists (select 1 from information_schema.columns " +
+                "where table_schema='auth' and table_name='users' and column_name='tokens_valid_from')");
+            if (!hasCol)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (auth.users.tokens_valid_from is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
+            Console.WriteLine("[schema] verified (auto-migrate off — this account may not alter the schema)");
+            return;
+        }
+
         await using var con = await ds.OpenConnectionAsync();
         await con.ExecuteAsync("""
             create schema if not exists master;
