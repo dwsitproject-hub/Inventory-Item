@@ -41,6 +41,20 @@ The issuer must exactly match the `issuer` in the Hub's discovery document; the 
 this on startup fetch and refuses a mismatched discovery host. If the Hub is unreachable, the
 button is hidden and password login still works.
 
+## Two ways in
+
+| Flow | Trigger | Route hit first |
+|---|---|---|
+| **SP-initiated** | User opens the app, clicks **Sign in with DWS Hub** | `/login` → button → authorize |
+| **Portal launch** (IdP-initiated) | User clicks the **IT Inventory tile inside the Hub** | `/auth/sso/start` → authorize |
+
+`/auth/sso/start` immediately begins the OIDC redirect. Because the user already has a Hub
+session, the Hub returns a code with no second login prompt, so the tile feels like a direct
+auto-login. It is a **separate URL from `/login` on purpose** — password sign-in must stay
+available for accounts with no Hub identity (e.g. the Super Admin), so the generic login page is
+never auto-bounced to the Hub. If SSO is disabled or the user already has a session, the start
+route falls through to `/login` or the app respectively.
+
 ## Hub-side registration (required)
 
 In Hub Admin, register BC Inventory as a target app (per the Hub integration contract):
@@ -49,6 +63,9 @@ In Hub Admin, register BC Inventory as a target app (per the Hub integration con
 - `oauth_client_id` = `it-inventory-test` (the assigned staging client id) — matches `SSO_CLIENT_ID`
 - `oidc_redirect_uris` includes **exactly** `http://test-it-inventory.kpndomain.com/auth/sso/callback`
   (and, for production, the production callback)
+- **App launch / link URL** = `http://test-it-inventory.kpndomain.com/auth/sso/start`
+  — this is what the Hub tile opens. If it points at the app root or `/login` instead, the user
+  lands on the sign-in page rather than being logged straight in.
 
 Until this is done, the Hub returns an enforcement error and the flow cannot start.
 

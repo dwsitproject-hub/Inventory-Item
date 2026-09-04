@@ -4,6 +4,7 @@ import { can, clearSession, getToken, getUser, hasPermissions, landingPath, me, 
 import Bell from './components/Bell'
 import Login from './pages/Login'
 import SsoCallback from './pages/SsoCallback'
+import SsoStart from './pages/SsoStart'
 import Dashboard from './pages/Dashboard'
 import Reports from './pages/Reports'
 import Ingestion from './pages/Ingestion'
@@ -99,6 +100,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/sso/start" element={<SsoStart />} />
       <Route path="/auth/sso/callback" element={<SsoCallback />} />
       <Route path="/dashboard" element={<Protected page="dashboard"><Dashboard /></Protected>} />
       <Route path="/reports" element={<Protected page="reports"><Reports /></Protected>} />
