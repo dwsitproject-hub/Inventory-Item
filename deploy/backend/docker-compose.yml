@@ -36,8 +36,10 @@ services:
       ASPNETCORE_ENVIRONMENT: Staging
       TZ: Asia/Jakarta
     ports:
-      # reachable from the frontend server only (see security-group rules in DEPLOYMENT.md)
-      - "172.28.92.57:8085:8080"
+      # Bind to the backend host's private interface only, never 0.0.0.0 — the API must be
+      # reachable from the frontend host, not the whole network. Set API_BIND and API_PORT in
+      # .env per environment (staging default shown) so no tracked file needs editing.
+      - "${API_BIND:-172.28.92.57}:${API_PORT:-8085}:8080"
     volumes:
       # Uncomment to seed staging with the sample extracts on first start:
       # - ../../docs:/samples:ro
