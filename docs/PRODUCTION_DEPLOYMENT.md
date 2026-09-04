@@ -47,9 +47,24 @@ Collect these and write them into a secure note (not into any tracked file):
 | Production hostname | e.g. `it-inventory.kpndomain.com` |
 | TLS certificate + key | For that hostname |
 | SMTP relay (optional) | Host, port, whether it needs TLS/credentials |
+| **DWS Hub SSO** — production issuer | The **production** Hub base URL, e.g. `https://dwshub.kpndomain.com`. Must exactly match the `issuer` in that Hub's discovery document — confirm it with the DWS Hub team (staging was `http://test-dwshub.kpndomain.com`). |
+| **DWS Hub SSO** — production client id | A **new** `oauth_client_id` the Hub admin assigns for production (staging used `it-inventory-test`; production gets its own). |
 
 **Whitelist the hosts on the ApsaraDB instance** (Alibaba console → Data Security → Whitelist):
 add **172.28.80.50** and **172.28.80.51**. Without this the connection is refused.
+
+**Register the production app in DWS Hub** (Hub Admin → the app). Do this before step 3.4 so SSO
+has something to talk to:
+
+- `sso_mode` = `OIDC (strict)`
+- `oauth_client_id` = the new production client id (matches `SSO_CLIENT_ID` in the `.env`)
+- **OIDC Redirect URIs** includes **exactly** `https://it-inventory.kpndomain.com/auth/sso/callback`
+  (HTTPS — the production callback; no trailing slash)
+- **Target URL** = `https://it-inventory.kpndomain.com/`
+
+The Hub tile drives an IdP-initiated launch: the Hub runs `authorize` with the user's Hub session
+and redirects to the callback with `code` + `code_verifier`. Over production HTTPS that redirect is
+encrypted in transit. Full behaviour and failure codes are in [`DWS_HUB_SSO.md`](DWS_HUB_SSO.md).
 
 ---
 
@@ -139,6 +154,15 @@ JWT_KEY=<openssl rand -base64 48>
 JWT_LIFETIME_MINUTES=120
 CORS_ORIGINS=https://it-inventory.kpndomain.com   # the production origin(s), comma-separated
 
+# DWS Hub single sign-on. Leave SSO_ENABLED=false to launch without SSO and turn it on later.
+# Issuer and callback are HTTPS in production; the client id is the production one, not the
+# staging it-inventory-test.
+SSO_ENABLED=true
+SSO_ISSUER=https://dwshub.kpndomain.com                 # the production Hub issuer (confirm exactly)
+SSO_CLIENT_ID=<production oauth_client_id from Hub>
+SSO_REDIRECT_URI=https://it-inventory.kpndomain.com/auth/sso/callback
+SSO_SCOPE=openid profile email
+
 SEED_ADMIN_PASSWORD=<strong, ≥10 chars>
 SEED_SITE_PASSWORD=<strong, ≥10 chars>
 
@@ -164,6 +188,10 @@ DB_USER=<privileged account> DB_PASSWORD='<privileged pw>' DB_AUTO_MIGRATE=true 
 It should print `[migrate] schema applied and seeded — exiting without serving.` This also seeds
 the two initial accounts from `SEED_ADMIN_PASSWORD` / `SEED_SITE_PASSWORD`.
 
+> This migrate applies the **full** schema, including the `sso_sub` column SSO needs — there is no
+> separate SSO migration. (On staging that column was added after the fact and caused an `SSO-006`
+> until the owner `--migrate` was run; running it here first avoids that.)
+
 ---
 
 ## 4. Start the backend (172.28.80.51)
@@ -177,6 +205,13 @@ Confirm it is healthy and reachable **from this host**:
 
 ```bash
 curl -s http://172.28.80.51:8091/api/v1/health          # -> {"status":"ok","db":true}
+```
+
+If SSO is enabled, confirm the backend reached the Hub and built its config (a failure here just
+hides the button — password login still works, so investigate but it is not a launch blocker):
+
+```bash
+curl -s http://172.28.80.51:8091/api/v1/auth/sso/info    # -> enabled:true + the production Hub endpoints
 ```
 
 Confirm it runs as the unprivileged user and on the least-privilege role:
@@ -282,6 +317,17 @@ Run through this before announcing the URL:
 - [ ] The Audit Log shows the deployment’s first logins.
 - [ ] Try a wrong password five times → the account locks (throttle live).
 - [ ] The API host is **not** reachable from a machine other than 172.28.80.50.
+
+If SSO is enabled, also:
+
+- [ ] `curl https://<host>/api/v1/auth/sso/info` → `enabled:true` with the production Hub endpoints.
+- [ ] The **Sign in with DWS Hub** button appears on the login page.
+- [ ] Create one real Hub user's email as an **active** account (Admin → User Management) — SSO does
+      **not** auto-create accounts; an unmatched Hub user is refused with `SSO-005`.
+- [ ] Click the **IT Inventory tile in the Hub** → you land in the app; the Audit Log records
+      `auth.sso_login`. (A `SSO-006` here means the schema migrate was skipped; `SSO-005` means the
+      email is not an active account.)
+- [ ] Password sign-in still works for an account with no Hub identity (e.g. the Super Admin).
 
 Then **rotate the seeded admin password** from a strong one you set, and confirm the old one no
 longer works.
