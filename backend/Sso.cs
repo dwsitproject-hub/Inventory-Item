@@ -179,37 +179,56 @@ public static class Sso
                 return Results.Problem(statusCode: 401, title: "SSO-004", detail: "Sign-in could not be verified (nonce mismatch).");
         }
 
-        // 3) map to a pre-existing local account: by stored Hub sub first, then by email.
-        await using var con = await ds.OpenConnectionAsync();
-        var user = await con.QueryFirstOrDefaultAsync(
-            "select id, email, full_name, role, all_entities, entity_id, site_id, status, sso_sub from auth.users where sso_sub = @sub",
-            new { sub });
-        if (user is null && !string.IsNullOrWhiteSpace(email))
-            user = await con.QueryFirstOrDefaultAsync(
-                "select id, email, full_name, role, all_entities, entity_id, site_id, status, sso_sub from auth.users where lower(email) = lower(@e)",
-                new { e = email });
-
-        if (user is null)
+        // 3) map to a pre-existing local account and issue the session. Wrapped so an unexpected
+        //    failure here (e.g. the sso_sub column missing because --migrate was not applied)
+        //    returns a clean, logged SSO-006 instead of a bare 500 the SPA cannot explain.
+        try
         {
-            Audit.Log("auth.sso_denied", null, "user", email ?? sub, "SSO sign-in for an account that does not exist",
-                new { sub, email }, ip);
-            return Results.Problem(statusCode: 403, title: "SSO-005",
-                detail: "Your DWS Hub account is not registered in BC Inventory. Ask an administrator to create your account first.");
+            await using var con = await ds.OpenConnectionAsync();
+            var user = await con.QueryFirstOrDefaultAsync(
+                "select id, email, full_name, role, all_entities, entity_id, site_id, status, sso_sub from auth.users where sso_sub = @sub",
+                new { sub });
+            if (user is null && !string.IsNullOrWhiteSpace(email))
+                user = await con.QueryFirstOrDefaultAsync(
+                    "select id, email, full_name, role, all_entities, entity_id, site_id, status, sso_sub from auth.users where lower(email) = lower(@e)",
+                    new { e = email });
+
+            if (user is null)
+            {
+                Audit.Log("auth.sso_denied", null, "user", email ?? sub, "SSO sign-in for an account that does not exist",
+                    new { sub, email }, ip);
+                return Results.Problem(statusCode: 403, title: "SSO-005",
+                    detail: "Your DWS Hub account is not registered in BC Inventory. Ask an administrator to create your account first.");
+            }
+            if ((string)user.status != "active")
+            {
+                Audit.Log("auth.sso_denied", Auth.ScopeOf(user), "user", ((long)user.id).ToString(), "SSO sign-in for a disabled account",
+                    new { sub, email }, ip);
+                return Results.Problem(statusCode: 403, title: "SSO-005", detail: "This account has been disabled.");
+            }
+
+            // Bind the Hub sub on first SSO login so the link is stable even if the email later changes.
+            if (user.sso_sub is null)
+                await con.ExecuteAsync("update auth.users set sso_sub = @sub where id = @id", new { sub, id = (long)user.id });
+
+            Audit.Log("auth.sso_login", Auth.ScopeOf(user), "user", ((long)user.id).ToString(),
+                "Signed in via DWS Hub", new { sub }, ip);
+            return Results.Ok(Auth.SessionResponse(cfg, user));
         }
-        if ((string)user.status != "active")
+        catch (Npgsql.PostgresException pex) when (pex.SqlState == "42703")
         {
-            Audit.Log("auth.sso_denied", Auth.ScopeOf(user), "user", ((long)user.id).ToString(), "SSO sign-in for a disabled account",
-                new { sub, email }, ip);
-            return Results.Problem(statusCode: 403, title: "SSO-005", detail: "This account has been disabled.");
+            // undefined_column — almost always the sso_sub column, i.e. the schema migration for
+            // SSO was not applied on this environment.
+            Console.WriteLine("[sso] callback DB schema error: " + pex.Message);
+            return Results.Problem(statusCode: 500, title: "SSO-006",
+                detail: "BC Inventory is not fully set up for SSO on this server (a schema update is pending). Ask an administrator to apply it.");
         }
-
-        // Bind the Hub sub on first SSO login so the link is stable even if the email later changes.
-        if (user.sso_sub is null)
-            await con.ExecuteAsync("update auth.users set sso_sub = @sub where id = @id", new { sub, id = (long)user.id });
-
-        Audit.Log("auth.sso_login", Auth.ScopeOf(user), "user", ((long)user.id).ToString(),
-            "Signed in via DWS Hub", new { sub }, ip);
-        return Results.Ok(Auth.SessionResponse(cfg, user));
+        catch (Exception ex)
+        {
+            Console.WriteLine("[sso] callback failed after verification: " + ex);
+            return Results.Problem(statusCode: 500, title: "SSO-006",
+                detail: "Sign-in with DWS Hub could not be completed due to a server error. Please contact an administrator.");
+        }
     }
 
     /// <summary>Verify an id_token: signature via JWKS (RS256), issuer, audience, expiry, sub.</summary>

@@ -122,3 +122,4 @@ Audit Log records the event as `auth.sso_login`.
 | SSO-003 | code exchange rejected (wrong redirect_uri / client_id / verifier, or a reused/expired code) |
 | SSO-004 | id_token failed verification (signature, `iss`/`aud`, expiry, or nonce) |
 | SSO-005 | verified Hub user has no active BC Inventory account — create it first |
+| SSO-006 | server error after verification — usually the `sso_sub` schema update was not applied on this host (run the `--migrate` below), or another unexpected failure (check `docker logs bc-inventory-api`) |
