@@ -146,17 +146,35 @@ export async function ssoBegin(info: SsoInfo): Promise<void> {
   window.location.href = `${info.authorizeEndpoint}?${params.toString()}`
 }
 
-/** Complete the flow: verify state, exchange the code via our backend, establish the session. */
-export async function ssoComplete(code: string, state: string): Promise<void> {
-  const raw = sessionStorage.getItem('bc.sso')
-  sessionStorage.removeItem('bc.sso')
-  if (!raw) throw new Error('Sign-in session expired. Please try again.')
-  const saved = JSON.parse(raw) as { verifier: string; state: string; nonce: string; redirectUri?: string }
-  if (state !== saved.state) throw new Error('Sign-in could not be verified (state mismatch). Please try again.')
-  const data = await request('/auth/sso/callback', {
-    method: 'POST',
-    body: JSON.stringify({ code, codeVerifier: saved.verifier, nonce: saved.nonce, redirectUri: saved.redirectUri }),
-  })
+/**
+ * Complete the flow and establish the session. Two initiation paths land here:
+ *
+ *  - **SP-initiated** (our own "Sign in with DWS Hub" button): ssoBegin() generated the PKCE
+ *    pair and stashed the verifier + state in sessionStorage. We match state and use that verifier.
+ *  - **Hub portal launch** (IdP-initiated): the Hub generated the PKCE pair, ran authorize with
+ *    the user's existing Hub session, and redirected here with `code` AND `code_verifier` in the
+ *    URL. There is nothing in sessionStorage. We use the URL-supplied verifier; there is no local
+ *    state to compare (inherent to IdP-initiated), so trust rests on the single-use code and the
+ *    id_token verification the backend performs (signature via JWKS, iss, aud, exp).
+ */
+export async function ssoComplete(code: string, state: string | null, verifierFromUrl?: string | null): Promise<void> {
+  let payload: { code: string; codeVerifier: string; nonce?: string; redirectUri?: string }
+
+  if (verifierFromUrl) {
+    // Hub portal launch — the Hub handed us the verifier.
+    sessionStorage.removeItem('bc.sso')
+    payload = { code, codeVerifier: verifierFromUrl }   // backend uses its configured redirect_uri
+  } else {
+    // SP-initiated — our ssoBegin stored the verifier keyed to this state.
+    const raw = sessionStorage.getItem('bc.sso')
+    sessionStorage.removeItem('bc.sso')
+    if (!raw) throw new Error('Sign-in session expired. Please try again.')
+    const saved = JSON.parse(raw) as { verifier: string; state: string; nonce: string; redirectUri?: string }
+    if (state !== saved.state) throw new Error('Sign-in could not be verified (state mismatch). Please try again.')
+    payload = { code, codeVerifier: saved.verifier, nonce: saved.nonce, redirectUri: saved.redirectUri }
+  }
+
+  const data = await request('/auth/sso/callback', { method: 'POST', body: JSON.stringify(payload) })
   sessionStorage.setItem('bc.token', data.accessToken)
   sessionStorage.setItem('bc.user', JSON.stringify(data.user))
   const profile = await me()

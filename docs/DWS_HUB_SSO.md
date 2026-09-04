@@ -43,17 +43,21 @@ button is hidden and password login still works.
 
 ## Two ways in
 
-| Flow | Trigger | Route hit first |
+| Flow | Trigger | How the code + verifier reach the callback |
 |---|---|---|
-| **SP-initiated** | User opens the app, clicks **Sign in with DWS Hub** | `/login` → button → authorize |
-| **Portal launch** (IdP-initiated) | User clicks the **IT Inventory tile inside the Hub** | `/auth/sso/start` → authorize |
+| **SP-initiated** | User opens the app, clicks **Sign in with DWS Hub** | The SPA generates the PKCE pair, keeps the verifier in `sessionStorage`, and the callback reads it back there. The URL carries only `code` + `state`. |
+| **Portal launch** (IdP-initiated) | User clicks the **IT Inventory tile inside the Hub** | The **Hub** generates the PKCE pair, runs `authorize` with the user's existing Hub session, and redirects to `/auth/sso/callback?code=…&state=…&code_verifier=…`. The callback uses the URL-supplied `code_verifier`. |
 
-`/auth/sso/start` immediately begins the OIDC redirect. Because the user already has a Hub
-session, the Hub returns a code with no second login prompt, so the tile feels like a direct
-auto-login. It is a **separate URL from `/login` on purpose** — password sign-in must stay
-available for accounts with no Hub identity (e.g. the Super Admin), so the generic login page is
-never auto-bounced to the Hub. If SSO is disabled or the user already has a session, the start
-route falls through to `/login` or the app respectively.
+The callback (`SsoCallback.tsx`) handles both: if the URL carries a `code_verifier`, it is a Hub
+launch and that verifier is used; otherwise it is our own button and the verifier comes from
+`sessionStorage`. Either way the backend exchange and id_token verification are identical. In the
+IdP-initiated case there is no locally stored `state` to compare (that is inherent to a launch the
+app did not start) — trust rests on the single-use code and the id_token signature/iss/aud/exp
+checks the backend performs. After sign-in the app replaces the callback URL with the landing
+page, so the `code_verifier` does not linger in browser history.
+
+> The `/auth/sso/start` route also exists for an SP-initiated auto-start, but **this Hub does not
+> need it** — its tile drives the IdP-initiated flow straight to the callback.
 
 ## Hub-side registration (required)
 
@@ -61,11 +65,10 @@ In Hub Admin, register BC Inventory as a target app (per the Hub integration con
 
 - `sso_mode` = `oidc`
 - `oauth_client_id` = `it-inventory-test` (the assigned staging client id) — matches `SSO_CLIENT_ID`
-- `oidc_redirect_uris` includes **exactly** `http://test-it-inventory.kpndomain.com/auth/sso/callback`
-  (and, for production, the production callback)
-- **App launch / link URL** = `http://test-it-inventory.kpndomain.com/auth/sso/start`
-  — this is what the Hub tile opens. If it points at the app root or `/login` instead, the user
-  lands on the sign-in page rather than being logged straight in.
+- `oidc_redirect_uris` (OIDC Redirect URIs) includes **exactly**
+  `http://test-it-inventory.kpndomain.com/auth/sso/callback` (and, for production, the production
+  callback). This is where the Hub sends the user after authenticating, with `code` + `code_verifier`.
+- **Target URL** = `http://test-it-inventory.kpndomain.com/` (the app home shown on the tile).
 
 Until this is done, the Hub returns an enforcement error and the flow cannot start.
 

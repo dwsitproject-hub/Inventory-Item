@@ -21,10 +21,13 @@ export default function SsoCallback() {
 
     const code = params.get('code')
     const state = params.get('state')
-    if (!code || !state) { setError('The sign-in response was incomplete. Please try again.'); return }
+    // A Hub portal launch (IdP-initiated) carries the PKCE verifier in the URL; an SP-initiated
+    // flow (our own button) does not and reads it from sessionStorage instead.
+    const verifier = params.get('code_verifier')
+    if (!code) { setError('The sign-in response was incomplete. Please try again.'); return }
 
-    ssoComplete(code, state)
-      .then(() => nav(landingPath(), { replace: true }))
+    ssoComplete(code, state, verifier)
+      .then(() => nav(landingPath(), { replace: true }))   // replaces this URL, clearing code/verifier from history
       .catch(e => setError(e.message || 'Sign-in failed.'))
   }, [])
 
