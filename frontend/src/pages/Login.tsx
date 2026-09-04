@@ -1,13 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { landingPath, login } from '../api'
+import { SsoInfo, landingPath, login, ssoBegin, ssoInfo } from '../api'
 
 export default function Login() {
   const [email, setEmail] = useState('admin@energi-up.com')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [sso, setSso] = useState<SsoInfo | null>(null)
   const nav = useNavigate()
+
+  useEffect(() => { ssoInfo().then(setSso).catch(() => setSso({ enabled: false })) }, [])
+
+  async function startSso() {
+    setBusy(true); setError('')
+    try { await ssoBegin(sso!) }            // redirects away; no return on success
+    catch (e: any) { setError(e.message || 'Could not start DWS Hub sign-in'); setBusy(false) }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -32,8 +41,16 @@ export default function Login() {
           <div style={{ color: 'var(--navy)' }}><b>BC Inventory</b><span style={{ color: 'var(--muted)' }}>Reporting System</span></div>
         </div>
         <h1>Sign in</h1>
-        <div className="sub">Local Docker test environment</div>
+        <div className="sub">Reporting System</div>
         {error && <div className="err">{error}</div>}
+        {sso?.enabled && (
+          <>
+            <button type="button" className="btn p" style={{ width: '100%', marginBottom: 4 }} disabled={busy} onClick={startSso}>
+              {busy ? 'Redirecting…' : 'Sign in with DWS Hub'}
+            </button>
+            <div className="ssodiv"><span>or sign in with email</span></div>
+          </>
+        )}
         <div className="fld">
           <label>Email</label>
           <input value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" />

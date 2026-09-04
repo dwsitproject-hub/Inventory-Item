@@ -3,6 +3,7 @@ import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'reac
 import { can, clearSession, getToken, getUser, hasPermissions, landingPath, me, setPermissions } from './api'
 import Bell from './components/Bell'
 import Login from './pages/Login'
+import SsoCallback from './pages/SsoCallback'
 import Dashboard from './pages/Dashboard'
 import Reports from './pages/Reports'
 import Ingestion from './pages/Ingestion'
@@ -98,6 +99,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/sso/callback" element={<SsoCallback />} />
       <Route path="/dashboard" element={<Protected page="dashboard"><Dashboard /></Protected>} />
       <Route path="/reports" element={<Protected page="reports"><Reports /></Protected>} />
       <Route path="/movement" element={<Protected page="movement"><Movement /></Protected>} />

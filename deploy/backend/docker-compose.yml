@@ -18,6 +18,12 @@ services:
       # false when DB_USER is the least-privilege role, which may not alter the schema.
       Db__AutoMigrate: ${DB_AUTO_MIGRATE:-true}
       Cors__Origins: ${CORS_ORIGINS:-}
+      # Single sign-on via DWS Hub (OIDC). Leave SSO_ENABLED unset/false to hide the button.
+      Sso__Enabled: ${SSO_ENABLED:-false}
+      Sso__Issuer: ${SSO_ISSUER:-}
+      Sso__ClientId: ${SSO_CLIENT_ID:-}
+      Sso__RedirectUri: ${SSO_REDIRECT_URI:-}
+      Sso__Scope: ${SSO_SCOPE:-openid profile email}
       # First-run only: initial passwords for the two seeded accounts.
       Seed__AdminPassword: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
       Seed__SitePassword: ${SEED_SITE_PASSWORD:?set SEED_SITE_PASSWORD in .env}

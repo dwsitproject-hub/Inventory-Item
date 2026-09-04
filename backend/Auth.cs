@@ -42,6 +42,23 @@ public static class Auth
 
         LoginThrottle.Succeeded(email);
 
+        Audit.Log("auth.login", ScopeOf(user), "user", ((long)user.id).ToString(), "Signed in", null, ip);
+        return Results.Ok(SessionResponse(cfg, user));
+    }
+
+    /// <summary>UserScope from a users-table row (dynamic from Dapper).</summary>
+    public static UserScope ScopeOf(dynamic user) => new(
+        (long)user.id, (string)user.email, (string)user.full_name, (string)user.role,
+        (bool)user.all_entities, (long?)user.entity_id, (long?)user.site_id);
+
+    /// <summary>
+    /// Mint a BC Inventory session for an authenticated account, and shape the login response.
+    /// Shared by password login and SSO federation (Sso.cs): however identity was proven, the
+    /// session, its claims and its lifetime are the same, so authorization, audit and the AR-01
+    /// per-request revalidation all behave identically.
+    /// </summary>
+    public static object SessionResponse(IConfiguration cfg, dynamic user)
+    {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(cfg["Jwt:Key"]!));
         var token = new JwtSecurityToken(
             issuer: "bc-inventory", audience: "bc-inventory",
@@ -62,11 +79,7 @@ public static class Auth
             expires: DateTime.UtcNow.AddMinutes(int.TryParse(cfg["Jwt:LifetimeMinutes"], out var m) && m is > 0 and <= 720 ? m : 120),
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 
-        Audit.Log("auth.login", new UserScope((long)user.id, (string)user.email, (string)user.full_name,
-                (string)user.role, (bool)user.all_entities, (long?)user.entity_id, (long?)user.site_id),
-            "user", ((long)user.id).ToString(), "Signed in", null, ip);
-
-        return Results.Ok(new
+        return new
         {
             accessToken = new JwtSecurityTokenHandler().WriteToken(token),
             user = new
@@ -78,7 +91,7 @@ public static class Auth
                 entityId = (long?)user.entity_id,
                 siteId = (long?)user.site_id
             }
-        });
+        };
     }
 
     /// <summary>Key under which the per-request middleware stores the freshly resolved scope.</summary>

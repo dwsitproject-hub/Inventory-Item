@@ -114,3 +114,8 @@ table.grid tr.rowsel:hover td{background:#fbe3e1}
 .modal h3{margin:0 0 10px;font-size:16px;color:var(--red)}
 .modal p{font-size:13px;color:var(--ink);line-height:1.5;margin:0 0 14px}
 .modal .fld{margin-bottom:14px}
+
+/* SSO divider on the login card */
+.ssodiv{display:flex;align-items:center;text-align:center;color:var(--muted);font-size:11px;margin:12px 0}
+.ssodiv::before,.ssodiv::after{content:"";flex:1;border-bottom:1px solid var(--line)}
+.ssodiv span{padding:0 10px;text-transform:uppercase;letter-spacing:.4px}

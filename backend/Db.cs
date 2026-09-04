@@ -77,6 +77,8 @@ public static class Db
                 status text not null default 'active',
                 created_at timestamptz not null default now()
             );
+            -- Links a local account to its DWS Hub identity (OIDC 'sub'), set on first SSO login.
+            alter table auth.users add column if not exists sso_sub text unique;
 
             -- configurable role → page → action matrix (Role Management)
             create table if not exists auth.role_permissions (

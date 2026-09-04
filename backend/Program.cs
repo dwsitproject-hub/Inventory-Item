@@ -98,6 +98,7 @@ var migrateOnly = args.Contains("--migrate");
 await Db.EnsureCreated(ds, autoMigrate || migrateOnly);
 Audit.Configure(ds);                 // before Seed, so a startup password reset is audited
 Notifications.Configure(ds, app.Configuration);
+Sso.Configure(app.Configuration);
 await Db.Seed(ds, app.Configuration);
 Permissions.Configure(ds);
 await Permissions.EnsureSeeded(ds);
@@ -124,6 +125,11 @@ api.MapGet("/health", async () =>
 
 api.MapPost("/auth/login", (LoginRequest req, HttpContext ctx) =>
     Auth.Login(ds, app.Configuration, req, ctx.Connection.RemoteIpAddress?.ToString()));
+
+// ---------- single sign-on via DWS Hub (OIDC + PKCE) ----------
+api.MapGet("/auth/sso/info", () => Sso.Info());
+api.MapPost("/auth/sso/callback", (SsoCallbackRequest req, HttpContext ctx) =>
+    Sso.Callback(ds, app.Configuration, req, ctx.Connection.RemoteIpAddress?.ToString()));
 
 api.MapGet("/me", (System.Security.Claims.ClaimsPrincipal user) => Auth.Me(ds, user)).RequireAuthorization();
 

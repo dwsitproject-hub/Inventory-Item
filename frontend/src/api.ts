@@ -113,6 +113,56 @@ export async function login(email: string, password: string): Promise<void> {
   setPermissions(profile.permissions ?? {})
 }
 
+// ---- SSO (DWS Hub, OIDC + PKCE) ----
+export type SsoInfo = { enabled: boolean; authorizeEndpoint?: string; clientId?: string; redirectUri?: string; scope?: string }
+export const ssoInfo = (): Promise<SsoInfo> => request('/auth/sso/info')
+
+function b64url(bytes: Uint8Array): string {
+  let s = ''
+  bytes.forEach(b => { s += String.fromCharCode(b) })
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+function randB64url(len = 32): string { return b64url(crypto.getRandomValues(new Uint8Array(len))) }
+async function s256(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
+  return b64url(new Uint8Array(digest))
+}
+
+/** Begin the OIDC authorize redirect. Stores the PKCE verifier, state and nonce for the callback. */
+export async function ssoBegin(info: SsoInfo): Promise<void> {
+  const verifier = randB64url(48)
+  const state = randB64url()
+  const nonce = randB64url()
+  sessionStorage.setItem('bc.sso', JSON.stringify({ verifier, state, nonce, redirectUri: info.redirectUri }))
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: info.clientId!,
+    redirect_uri: info.redirectUri!,
+    code_challenge: await s256(verifier),
+    code_challenge_method: 'S256',
+    scope: info.scope || 'openid profile email',
+    state, nonce,
+  })
+  window.location.href = `${info.authorizeEndpoint}?${params.toString()}`
+}
+
+/** Complete the flow: verify state, exchange the code via our backend, establish the session. */
+export async function ssoComplete(code: string, state: string): Promise<void> {
+  const raw = sessionStorage.getItem('bc.sso')
+  sessionStorage.removeItem('bc.sso')
+  if (!raw) throw new Error('Sign-in session expired. Please try again.')
+  const saved = JSON.parse(raw) as { verifier: string; state: string; nonce: string; redirectUri?: string }
+  if (state !== saved.state) throw new Error('Sign-in could not be verified (state mismatch). Please try again.')
+  const data = await request('/auth/sso/callback', {
+    method: 'POST',
+    body: JSON.stringify({ code, codeVerifier: saved.verifier, nonce: saved.nonce, redirectUri: saved.redirectUri }),
+  })
+  sessionStorage.setItem('bc.token', data.accessToken)
+  sessionStorage.setItem('bc.user', JSON.stringify(data.user))
+  const profile = await me()
+  setPermissions(profile.permissions ?? {})
+}
+
 // ---- role management ----
 export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean; delete: boolean }
 export type RoleMatrix = {
