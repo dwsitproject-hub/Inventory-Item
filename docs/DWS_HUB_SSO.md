@@ -32,7 +32,7 @@ stored on the account, so the link stays stable even if the email later changes.
 ```
 SSO_ENABLED=true
 SSO_ISSUER=http://test-dwshub.kpndomain.com
-SSO_CLIENT_ID=<the client id the Hub admin assigned>
+SSO_CLIENT_ID=it-inventory-test
 SSO_REDIRECT_URI=http://test-it-inventory.kpndomain.com/auth/sso/callback
 SSO_SCOPE=openid profile email
 ```
@@ -46,11 +46,15 @@ button is hidden and password login still works.
 In Hub Admin, register BC Inventory as a target app (per the Hub integration contract):
 
 - `sso_mode` = `oidc`
-- `oauth_client_id` = a unique client id — put the same value in `SSO_CLIENT_ID`
+- `oauth_client_id` = `it-inventory-test` (the assigned staging client id) — matches `SSO_CLIENT_ID`
 - `oidc_redirect_uris` includes **exactly** `http://test-it-inventory.kpndomain.com/auth/sso/callback`
   (and, for production, the production callback)
 
 Until this is done, the Hub returns an enforcement error and the flow cannot start.
+
+> **Staging registration verified.** A pre-flight of `GET /api/sso/authorize` with
+> `client_id=it-inventory-test` and the callback above returned a 302 to the Hub login (carrying
+> the request in `returnTo`), which is the correct response for a registered client — not an error.
 
 ## Enabling on staging
 
