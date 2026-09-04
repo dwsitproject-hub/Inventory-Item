@@ -85,6 +85,11 @@ cd /opt/bc-inventory/deploy && ./update.sh frontend
 curl -s http://test-it-inventory.kpndomain.com/api/v1/auth/sso/info    # enabled:true + Hub endpoints
 ```
 
+> **Live on staging (confirmed).** `/auth/sso/info` returns `enabled:true` with the Hub
+> `authorize` endpoint, `client_id=it-inventory-test`, and the callback URI. The backend can only
+> build that payload after a successful discovery + JWKS fetch, so the Hub connection is verified.
+> The final human sign-in needs a Hub account whose email matches an **active** BC Inventory user.
+
 Then, with a Hub account whose email matches an active BC Inventory user, open the login page,
 click **Sign in with DWS Hub**, authenticate at the Hub, and confirm you land in the app. The
 Audit Log records the event as `auth.sso_login`.
