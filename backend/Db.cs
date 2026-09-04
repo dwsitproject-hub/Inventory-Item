@@ -89,6 +89,9 @@ public static class Db
                 updated_at timestamptz not null default now(),
                 unique (role, page)
             );
+            -- Permanently delete ingested report rows (FR-R14). Default false: only Super Admin
+            -- has it until an administrator grants it in Role Management.
+            alter table auth.role_permissions add column if not exists can_delete boolean not null default false;
 
             create table if not exists ingest.ingestion_files (
                 id bigint generated always as identity primary key,

@@ -13,6 +13,15 @@ public record QueryRequest(
     SortSpec[]? Sort,
     PageSpec? Page);
 
+/// <summary>
+/// Delete request (FR-R14). Mode "ids" removes the listed rows; mode "filter" removes every row
+/// matching the same filter the grid is showing. Both are bounded to the caller's entity scope.
+/// </summary>
+public record DeleteRequest(
+    string Mode,                                // "ids" | "filter"
+    long[]? Ids,
+    Dictionary<string, string?>? Filters);
+
 public record BuiltQuery(Catalog.Report Report, string Where, DynamicParameters Params, string Order, string[] Columns);
 
 /// <summary>
@@ -113,8 +122,10 @@ public static class Reports
         var offset = Math.Max(req.Page?.Offset ?? 0, 0);
         var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Expr(byName[c])} as c{i}"));
 
+        // The line id travels with each row so the grid can offer per-row delete (FR-R14). It is
+        // an internal key, returned under a reserved name the column projection can never collide with.
         var sql = $"""
-            select {proj}
+            select l.id as __id, {proj}
             from bc.document_lines l
             where {b.Where}
             order by {b.Order}
@@ -134,6 +145,7 @@ public static class Reports
         var rows = raw.Select(r =>
         {
             var o = new Dictionary<string, object?>();
+            o["__id"] = r["__id"];
             for (int i = 0; i < b.Columns.Length; i++) o[b.Columns[i]] = r[$"c{i}"];
             return o;
         });
@@ -154,6 +166,80 @@ public static class Reports
                 elapsedMs = sw.ElapsedMilliseconds
             }
         });
+    }
+
+    /// <summary>
+    /// Permanently delete ingested rows (FR-R14). The caller must already hold the delete
+    /// permission for the report's page (checked at the route). Deletion is bounded to the
+    /// caller's entity scope by the same query builder the grid uses, so a scoped user can never
+    /// reach another entity's rows even by passing ids. Every deletion is captured in the audit
+    /// trail with a bounded snapshot of what was removed, so an append-only record survives.
+    /// </summary>
+    public static async Task<IResult> Delete(NpgsqlDataSource ds, string key, DeleteRequest req, UserScope scope, string? ip = null)
+    {
+        var mode = (req.Mode ?? "").ToLowerInvariant();
+        if (mode is not ("ids" or "filter"))
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "mode must be 'ids' or 'filter'.");
+
+        // Reuse the query builder for the WHERE and the scope bound. Columns/sort are irrelevant here.
+        var (built, error) = Build(key, new QueryRequest(req.Filters, null, null, null), scope);
+        if (error != null) return error;
+        var b = built!;
+        var where = b.Where;
+        var p = b.Params;
+
+        if (mode == "ids")
+        {
+            var ids = (req.Ids ?? Array.Empty<long>()).Distinct().ToArray();
+            if (ids.Length == 0)
+                return Results.Problem(statusCode: 400, title: "VAL-001", detail: "No rows selected.");
+            if (ids.Length > 10000)
+                return Results.Problem(statusCode: 400, title: "VAL-001", detail: "Select at most 10,000 rows per delete.");
+            where = $"({where}) and l.id = any(@ids)";     // still scope-bounded by the built WHERE
+            p.Add("ids", ids);
+        }
+
+        await using var con = await ds.OpenConnectionAsync();
+        await using var tx = await con.BeginTransactionAsync();
+
+        // Snapshot before deleting: full count and ids, plus a small sample of row data so the
+        // audit entry is human-readable without being unbounded.
+        var affected = (await con.QueryAsync<(long id, long docId)>(
+            $"select l.id, l.document_id from bc.document_lines l where {where}", p, tx)).ToList();
+        if (affected.Count == 0)
+            return Results.Problem(statusCode: 404, title: "RPT-003", detail: "No matching rows to delete (they may already be gone).");
+
+        var sample = (await con.QueryAsync<string>(
+            $"select l.data::text from bc.document_lines l where {where} order by l.id limit 20", p, tx)).ToList();
+
+        var deleted = await con.ExecuteAsync($"delete from bc.document_lines l where {where}", p, tx);
+
+        // Remove parent documents left with no lines, so document counts and the dashboard stay honest.
+        var docIds = affected.Select(a => a.docId).Distinct().ToArray();
+        var docsRemoved = await con.ExecuteAsync("""
+            delete from bc.documents d
+            where d.id = any(@docIds)
+              and not exists (select 1 from bc.document_lines l where l.document_id = d.id)
+            """, new { docIds }, tx);
+
+        await tx.CommitAsync();
+
+        var report = Catalog.Get(key)!;
+        Audit.Log("report.delete", scope, "report", key,
+            $"Deleted {deleted} row(s) from {report.Title}" + (docsRemoved > 0 ? $" ({docsRemoved} document(s) removed)" : ""),
+            new
+            {
+                mode,
+                report = report.Title,
+                template = report.Template,
+                filters = req.Filters,
+                count = deleted,
+                documentsRemoved = docsRemoved,
+                ids = affected.Select(a => a.id).Take(5000).ToArray(),
+                sample = sample.Select(s => System.Text.Json.JsonDocument.Parse(s).RootElement).ToArray(),
+            }, ip);
+
+        return Results.Ok(new { deleted, documentsRemoved = docsRemoved });
     }
 
     /// <summary>

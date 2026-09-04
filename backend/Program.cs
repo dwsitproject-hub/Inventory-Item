@@ -145,6 +145,15 @@ api.MapPost("/reports/{key}/export", async (string key, string? format, QueryReq
     return await Exports.Run(ds, key, format ?? "xlsx", req, scope, ctx.Connection.RemoteIpAddress?.ToString());
 }).RequireAuthorization();
 
+// Permanently delete ingested rows (FR-R14). Governed by the "delete" permission on the report's page.
+api.MapPost("/reports/{key}/delete", async (string key, DeleteRequest req, HttpContext ctx) =>
+{
+    var scope = Auth.Scope(ctx.User);
+    var page = Catalog.Get(key)?.Page ?? "reports";
+    if (await Permissions.Require(scope, page, "delete") is { } err) return err;
+    return await Reports.Delete(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+}).RequireAuthorization();
+
 api.MapGet("/reports/{key}/template", (string key, HttpContext ctx) =>
 {
     var report = Catalog.Get(key);

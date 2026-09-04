@@ -198,14 +198,14 @@ function RoleManagement() {
     .catch(e => setError(e.message))
   useEffect(() => { load() }, [])
 
-  function toggle(role: string, page: string, action: 'view' | 'insert' | 'edit') {
+  function toggle(role: string, page: string, action: 'view' | 'insert' | 'edit' | 'delete') {
     setDraft(d => {
       const rows = d[role].map(r => {
         if (r.page !== page) return r
         const next = { ...r, [action]: !r[action] }
-        // insert/edit imply view — a page you cannot open cannot be acted on
-        if ((action === 'insert' || action === 'edit') && next[action]) next.view = true
-        if (action === 'view' && !next.view) { next.insert = false; next.edit = false }
+        // insert/edit/delete imply view — a page you cannot open cannot be acted on
+        if ((action === 'insert' || action === 'edit' || action === 'delete') && next[action]) next.view = true
+        if (action === 'view' && !next.view) { next.insert = false; next.edit = false; next.delete = false }
         return next
       })
       return { ...d, [role]: rows }
@@ -262,15 +262,16 @@ function RoleManagement() {
             <table className="grid">
               <thead><tr>
                 <th style={{ minWidth: 200 }}>Page</th>
-                <th style={{ width: 90 }}>View</th>
-                <th style={{ width: 110 }}>Insert</th>
-                <th style={{ width: 110 }}>Edit</th>
-                <th>What insert / edit control</th>
+                <th style={{ width: 80 }}>View</th>
+                <th style={{ width: 90 }}>Insert</th>
+                <th style={{ width: 90 }}>Edit</th>
+                <th style={{ width: 90 }}>Delete</th>
+                <th>What insert / edit / delete control</th>
               </tr></thead>
               <tbody>
                 {data.pages.map(p => {
                   const row = draft[r.role]?.find(x => x.page === p.key)
-                    ?? { page: p.key, view: false, insert: false, edit: false }
+                    ?? { page: p.key, view: false, insert: false, edit: false, delete: false }
                   const disabled = r.locked || !data.canEdit
                   return (
                     <tr key={p.key}>
@@ -285,8 +286,12 @@ function RoleManagement() {
                         ? <input type="checkbox" checked={row.edit} disabled={disabled}
                           onChange={() => toggle(r.role, p.key, 'edit')} />
                         : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
+                      <td>{p.hasDelete
+                        ? <input type="checkbox" checked={row.delete} disabled={disabled}
+                          onChange={() => toggle(r.role, p.key, 'delete')} />
+                        : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                       <td style={{ color: 'var(--muted)', fontSize: 11.5, whiteSpace: 'normal' }}>
-                        {[p.insertMeans && `Insert: ${p.insertMeans}`, p.editMeans && `Edit: ${p.editMeans}`]
+                        {[p.insertMeans && `Insert: ${p.insertMeans}`, p.editMeans && `Edit: ${p.editMeans}`, p.deleteMeans && `Delete: ${p.deleteMeans}`]
                           .filter(Boolean).join(' · ') || 'view only'}
                       </td>
                     </tr>
@@ -299,8 +304,9 @@ function RoleManagement() {
       ))}
       <div className="note">
         Permissions are enforced by the API, not just hidden in the UI — a revoked page returns 403
-        even if called directly. Ticking Insert or Edit automatically grants View, since a page you
-        cannot open cannot be acted on. Every change is audited and alerts the administrators.
+        even if called directly. Ticking Insert, Edit or Delete automatically grants View, since a page you
+        cannot open cannot be acted on. Delete permanently removes ingested report rows and is
+        off for every role except Super Admin by default. Every change is audited and alerts the administrators.
       </div>
     </>
   )

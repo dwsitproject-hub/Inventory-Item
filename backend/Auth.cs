@@ -121,7 +121,7 @@ public static class Auth
         return Results.Ok(new
         {
             user = new { scope.Email, scope.FullName, scope.Role, scope.AllEntities, scope.EntityId, scope.SiteId },
-            permissions = perms.ToDictionary(k => k.Key, v => new { v.Value.View, v.Value.Insert, v.Value.Edit }),
+            permissions = perms.ToDictionary(k => k.Key, v => new { v.Value.View, v.Value.Insert, v.Value.Edit, v.Value.Delete }),
             entities,
             sites
         });

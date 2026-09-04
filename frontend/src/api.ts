@@ -20,10 +20,10 @@ export type User = {
   allEntities: boolean; entityId: number | null; siteId: number | null
 }
 
-export type PagePerm = { view: boolean; insert: boolean; edit: boolean }
+export type PagePerm = { view: boolean; insert: boolean; edit: boolean; delete: boolean }
 export type PermissionMap = Record<string, PagePerm>
 
-const NO_PERM: PagePerm = { view: false, insert: false, edit: false }
+const NO_PERM: PagePerm = { view: false, insert: false, edit: false, delete: false }
 
 export function getPermissions(): PermissionMap {
   const raw = sessionStorage.getItem('bc.perms')
@@ -114,9 +114,9 @@ export async function login(email: string, password: string): Promise<void> {
 }
 
 // ---- role management ----
-export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean }
+export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean; delete: boolean }
 export type RoleMatrix = {
-  pages: { key: string; title: string; hasInsert: boolean; hasEdit: boolean; insertMeans: string; editMeans: string }[]
+  pages: { key: string; title: string; hasInsert: boolean; hasEdit: boolean; hasDelete: boolean; insertMeans: string; editMeans: string; deleteMeans: string }[]
   roles: { role: string; locked: boolean; pages: RolePermRow[] }[]
   canEdit: boolean
 }
@@ -166,6 +166,12 @@ export const listViews = (key: string): Promise<{ last: SavedView | null; named:
 export const saveView = (key: string, payload: { name?: string | null; columns: string[]; sorts: SortSpec[]; pageSize: number }) =>
   request(`/reports/${key}/views`, { method: 'PUT', body: JSON.stringify(payload) })
 export const deleteView = (id: number) => request(`/views/${id}`, { method: 'DELETE' })
+
+export type DeleteRowsBody =
+  | { mode: 'ids'; ids: number[] }
+  | { mode: 'filter'; filters: Record<string, string> }
+export const deleteReportRows = (key: string, body: DeleteRowsBody): Promise<{ deleted: number; documentsRemoved: number }> =>
+  request(`/reports/${key}/delete`, { method: 'POST', body: JSON.stringify(body) })
 
 // ---- notifications ----
 export type Notification = { id: number; eventType: string; title: string; body?: string; createdAt: string; read: boolean }

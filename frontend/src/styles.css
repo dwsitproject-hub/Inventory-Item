@@ -102,3 +102,15 @@ table.grid tr:hover td{background:#fafbfc}
 .loading{color:var(--muted);font-size:12.5px;padding:18px}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--steel);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:7px}
 @keyframes sp{to{transform:rotate(360deg)}}
+
+/* row selection + delete (FR-R14) */
+.selbar{background:#fff8e6;border-bottom:1px solid var(--line);padding:8px 16px;font-size:12.5px;color:var(--ink)}
+.selbar a{color:var(--steel);cursor:pointer;text-decoration:underline;margin-left:4px}
+table.grid tr.rowsel td{background:#fdeceb}
+table.grid tr.rowsel:hover td{background:#fbe3e1}
+.okmsg{background:var(--okbg);color:var(--ok);border-radius:8px;padding:9px 12px;font-size:12.5px}
+.modalwrap{position:fixed;inset:0;background:rgba(14,40,65,.45);display:flex;align-items:center;justify-content:center;z-index:50}
+.modal{background:#fff;border-radius:12px;padding:22px 24px;width:440px;max-width:92vw;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.modal h3{margin:0 0 10px;font-size:16px;color:var(--red)}
+.modal p{font-size:13px;color:var(--ink);line-height:1.5;margin:0 0 14px}
+.modal .fld{margin-bottom:14px}

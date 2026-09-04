@@ -4,7 +4,7 @@ using Npgsql;
 
 namespace BcInventory.Api;
 
-public record PagePermission(string Page, bool View, bool Insert, bool Edit);
+public record PagePermission(string Page, bool View, bool Insert, bool Edit, bool Delete = false);
 public record RolePermissionUpdate(string Role, PagePermission[] Pages);
 
 /// <summary>
@@ -18,18 +18,20 @@ public static class Permissions
 {
     public const string SuperAdmin = "Super Admin";
 
-    public record PageDef(string Key, string Title, bool HasInsert, bool HasEdit, string InsertMeans, string EditMeans);
+    public record PageDef(string Key, string Title, bool HasInsert, bool HasEdit, bool HasDelete,
+                          string InsertMeans, string EditMeans, string DeleteMeans);
 
     /// <summary>Screens that can be governed. Actions that make no sense for a page are not offered.</summary>
     public static readonly PageDef[] Pages =
     {
-        new("dashboard", "Dashboard", false, false, "", ""),
-        new("reports", "Reports", false, true, "", "Export data & save views"),
-        new("movement", "Inventory Movement", false, true, "", "Export data & save views"),
-        new("ingestion", "Ingestion & Upload", true, true, "Upload files", "Resolve quarantined rows"),
-        new("lpm", "LPM / Reconciliation", false, false, "", ""),
-        new("admin", "Administration", true, true, "Create users & master data", "Modify users & master data"),
-        new("audit", "Audit Log", false, true, "", "Export the audit log"),
+        new("dashboard", "Dashboard", false, false, false, "", "", ""),
+        // Delete on the two report surfaces permanently removes ingested rows (FR-R14).
+        new("reports", "Reports", false, true, true, "", "Export data & save views", "Delete ingested rows"),
+        new("movement", "Inventory Movement", false, true, true, "", "Export data & save views", "Delete ingested rows"),
+        new("ingestion", "Ingestion & Upload", true, true, false, "Upload files", "Resolve quarantined rows", ""),
+        new("lpm", "LPM / Reconciliation", false, false, false, "", "", ""),
+        new("admin", "Administration", true, true, false, "Create users & master data", "Modify users & master data", ""),
+        new("audit", "Audit Log", false, true, false, "", "Export the audit log", ""),
     };
 
     public static readonly string[] Roles =
@@ -81,12 +83,15 @@ public static class Permissions
                 values (@role, @page, @v, @i, @e)
                 on conflict (role, page) do nothing
                 """, new { role, page, v, i, e });
-        // Super Admin is implicit (always full) but stored so the matrix reads completely
+        // Super Admin is implicit (always full) but stored so the matrix reads completely.
+        // can_delete defaults false for every other role (the column default); only Super Admin
+        // may delete report rows until an administrator grants it.
         foreach (var p in Pages)
             await con.ExecuteAsync("""
-                insert into auth.role_permissions (role, page, can_view, can_insert, can_edit)
-                values (@role, @page, true, true, true)
-                on conflict (role, page) do update set can_view = true, can_insert = true, can_edit = true
+                insert into auth.role_permissions (role, page, can_view, can_insert, can_edit, can_delete)
+                values (@role, @page, true, true, true, true)
+                on conflict (role, page) do update
+                  set can_view = true, can_insert = true, can_edit = true, can_delete = true
                 """, new { role = SuperAdmin, page = p.Key });
     }
 
@@ -99,13 +104,13 @@ public static class Permissions
         {
             if (DateTime.UtcNow - _loadedAt < TimeSpan.FromSeconds(30) && !_cache.IsEmpty) return;
             await using var con = await _ds.OpenConnectionAsync();
-            var rows = await con.QueryAsync<(string role, string page, bool v, bool i, bool e)>(
-                "select role, page, can_view, can_insert, can_edit from auth.role_permissions");
+            var rows = await con.QueryAsync<(string role, string page, bool v, bool i, bool e, bool d)>(
+                "select role, page, can_view, can_insert, can_edit, can_delete from auth.role_permissions");
             // Fill first, then publish. Clearing in place would let a concurrent reader observe
             // an empty cache and conclude "no permissions" — which is indistinguishable from a
             // real denial.
             var fresh = rows.ToDictionary(r => r.role + "|" + r.page,
-                                          r => new PagePermission(r.page, r.v, r.i, r.e));
+                                          r => new PagePermission(r.page, r.v, r.i, r.e, r.d));
             foreach (var kv in fresh) _cache[kv.Key] = kv.Value;
             foreach (var key in _cache.Keys.Where(k => !fresh.ContainsKey(k)).ToList())
                 _cache.TryRemove(key, out _);
@@ -118,9 +123,9 @@ public static class Permissions
 
     public static async Task<PagePermission> For(string role, string page)
     {
-        if (role == SuperAdmin) return new PagePermission(page, true, true, true);
+        if (role == SuperAdmin) return new PagePermission(page, true, true, true, true);
         await Load();
-        return _cache.TryGetValue(role + "|" + page, out var p) ? p : new PagePermission(page, false, false, false);
+        return _cache.TryGetValue(role + "|" + page, out var p) ? p : new PagePermission(page, false, false, false, false);
     }
 
     public static async Task<Dictionary<string, PagePermission>> Effective(string role)
@@ -139,6 +144,7 @@ public static class Permissions
             "view" => p.View,
             "insert" => p.Insert,
             "edit" => p.Edit,
+            "delete" => p.Delete,
             _ => false
         };
         if (ok) return null;
@@ -156,9 +162,9 @@ public static class Permissions
         // back on save, so serving a momentarily-stale or half-loaded cache here would let a
         // save silently strip every permission it did not know about.
         await using var con = await ds.OpenConnectionAsync();
-        var stored = (await con.QueryAsync<(string role, string page, bool v, bool i, bool e)>(
-                "select role, page, can_view, can_insert, can_edit from auth.role_permissions"))
-            .ToDictionary(r => r.role + "|" + r.page, r => new PagePermission(r.page, r.v, r.i, r.e));
+        var stored = (await con.QueryAsync<(string role, string page, bool v, bool i, bool e, bool d)>(
+                "select role, page, can_view, can_insert, can_edit, can_delete from auth.role_permissions"))
+            .ToDictionary(r => r.role + "|" + r.page, r => new PagePermission(r.page, r.v, r.i, r.e, r.d));
 
         var matrix = Roles.Select(role => new
         {
@@ -167,14 +173,14 @@ public static class Permissions
             pages = Pages.Select(p =>
             {
                 var perm = role == SuperAdmin
-                    ? new PagePermission(p.Key, true, true, true)
-                    : stored.GetValueOrDefault(role + "|" + p.Key, new PagePermission(p.Key, false, false, false));
-                return new { page = p.Key, perm.View, perm.Insert, perm.Edit };
+                    ? new PagePermission(p.Key, true, true, true, true)
+                    : stored.GetValueOrDefault(role + "|" + p.Key, new PagePermission(p.Key, false, false, false, false));
+                return new { page = p.Key, perm.View, perm.Insert, perm.Edit, perm.Delete };
             })
         });
         return Results.Ok(new
         {
-            pages = Pages.Select(p => new { p.Key, p.Title, p.HasInsert, p.HasEdit, p.InsertMeans, p.EditMeans }),
+            pages = Pages.Select(p => new { p.Key, p.Title, p.HasInsert, p.HasEdit, p.HasDelete, p.InsertMeans, p.EditMeans, p.DeleteMeans }),
             roles = matrix,
             canEdit = scope.Role == SuperAdmin
         });
@@ -200,15 +206,16 @@ public static class Permissions
             // an action the page does not offer can never be granted
             var insert = def.HasInsert && p.Insert;
             var edit = def.HasEdit && p.Edit;
-            // insert/edit without view would be unreachable in the UI — keep the matrix coherent
-            var view = p.View || insert || edit;
+            var delete = def.HasDelete && p.Delete;
+            // insert/edit/delete without view would be unreachable in the UI — keep the matrix coherent
+            var view = p.View || insert || edit || delete;
             await con.ExecuteAsync("""
-                insert into auth.role_permissions (role, page, can_view, can_insert, can_edit)
-                values (@role, @page, @view, @insert, @edit)
+                insert into auth.role_permissions (role, page, can_view, can_insert, can_edit, can_delete)
+                values (@role, @page, @view, @insert, @edit, @delete)
                 on conflict (role, page) do update
                   set can_view = excluded.can_view, can_insert = excluded.can_insert,
-                      can_edit = excluded.can_edit, updated_at = now()
-                """, new { role = req.Role, page = p.Page, view, insert, edit });
+                      can_edit = excluded.can_edit, can_delete = excluded.can_delete, updated_at = now()
+                """, new { role = req.Role, page = p.Page, view, insert, edit, delete });
         }
         Invalidate();
 

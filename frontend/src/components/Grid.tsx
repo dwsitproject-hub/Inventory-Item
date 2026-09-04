@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ReportMeta, SavedView, SortSpec, can, deleteView, exportReport, listViews, queryReport, saveView } from '../api'
+import { ReportMeta, SavedView, SortSpec, can, deleteReportRows, deleteView, exportReport, listViews, queryReport, saveView } from '../api'
 import { fmtDate, fmtInt, fmtNum } from '../format'
 
 /**
- * Server-side report grid (FR-R4, FR-R9..R13).
+ * Server-side report grid (FR-R4, FR-R9..R14).
  * Column names are the exact upload template headers; the server receives the visible
  * column projection, sorts and page — only that data comes back.
  */
@@ -18,6 +18,7 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
   const [meta, setMeta] = useState<{ asOf?: string; elapsedMs?: number }>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
   const [chooserOpen, setChooserOpen] = useState(false)
   const [namedViews, setNamedViews] = useState<SavedView[]>([])
   const [exporting, setExporting] = useState(false)
@@ -25,10 +26,19 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
   const seq = useRef(0)
   const layoutReady = useRef(false)
 
+  // ---- row selection for delete (FR-R14) ----
+  const canDelete = can(report.page, 'delete')
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [allFiltered, setAllFiltered] = useState(false)   // "select every row matching the filter"
+  const [confirm, setConfirm] = useState<{ count: number; mode: 'ids' | 'filter' } | null>(null)
+  const [confirmText, setConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const clearSelection = () => { setSelected(new Set()); setAllFiltered(false) }
+
   // report switch: restore the user's last layout (FR-R12), else defaults
   useEffect(() => {
     layoutReady.current = false
-    setSorts([]); setOffset(0); setCols(report.defaults)
+    setSorts([]); setOffset(0); setCols(report.defaults); clearSelection()
     listViews(report.key).then(v => {
       setNamedViews(v.named)
       if (v.last) {
@@ -50,7 +60,8 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
     return () => clearTimeout(t)
   }, [cols, sorts, pageSize])
 
-  useEffect(() => { setOffset(0) }, [JSON.stringify(filters), pageSize])
+  // a different filter set is a different population — drop any pending selection
+  useEffect(() => { setOffset(0); clearSelection(); setInfo('') }, [JSON.stringify(filters), pageSize])
 
   function applyView(v: SavedView) {
     setCols(v.columns.filter(c => fieldsByName.has(c)))
@@ -102,6 +113,19 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
 
   useEffect(() => { fetchPage() }, [fetchPage])
 
+  async function doDelete() {
+    if (!confirm) return
+    setDeleting(true); setError('')
+    try {
+      const res = await deleteReportRows(report.key,
+        confirm.mode === 'filter' ? { mode: 'filter', filters } : { mode: 'ids', ids: [...selected] })
+      setInfo(`Deleted ${fmtInt(res.deleted)} row(s)` + (res.documentsRemoved ? ` and ${fmtInt(res.documentsRemoved)} empty document(s)` : '') + '.')
+      setConfirm(null); setConfirmText(''); clearSelection()
+      setOffset(0); fetchPage()
+    } catch (e: any) { setError(e.message) }
+    finally { setDeleting(false) }
+  }
+
   function toggleSort(name: string, multi: boolean) {
     setSorts(prev => {
       const i = prev.findIndex(s => s.field === name)
@@ -141,6 +165,21 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
   const pages = Math.max(1, Math.ceil(Math.min(total, 100000) / pageSize))
   const hidden = report.fields.filter(f => !cols.includes(f.name))
 
+  // selection derived state
+  const pageIds = rows.map(r => Number(r.__id))
+  const rowSelected = (id: number) => allFiltered || selected.has(id)
+  const allPageSelected = rows.length > 0 && pageIds.every(id => rowSelected(id))
+  const selectedCount = allFiltered ? total : selected.size
+
+  function toggleRow(id: number) {
+    setAllFiltered(false)
+    setSelected(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  }
+  function togglePage() {
+    if (allPageSelected) { setAllFiltered(false); setSelected(prev => { const n = new Set(prev); pageIds.forEach(id => n.delete(id)); return n }) }
+    else setSelected(prev => { const n = new Set(prev); pageIds.forEach(id => n.add(id)); return n })
+  }
+
   return (
     <div className="tablewrap">
       <div className="tbar">
@@ -151,6 +190,13 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {canDelete && (
+            <button className="btn r" disabled={selectedCount === 0}
+              title="Permanently delete the selected rows"
+              onClick={() => setConfirm({ count: selectedCount, mode: allFiltered ? 'filter' : 'ids' })}>
+              🗑 Delete{selectedCount > 0 ? ` (${fmtInt(selectedCount)})` : ''}
+            </button>
+          )}
           {namedViews.length > 0 && (
             <select style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '7px 10px', fontSize: 12.5 }}
               value="" onChange={e => { const v = namedViews.find(x => x.id === Number(e.target.value)); if (v) applyView(v) }}>
@@ -213,12 +259,29 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
         )}
       </div>
 
+      {info && <div className="okmsg" style={{ margin: 12 }}>{info}</div>}
       {error && <div className="err" style={{ margin: 12 }}>{error}</div>}
+
+      {/* select-all-across-pages prompt (FR-R14) */}
+      {canDelete && allPageSelected && total > rows.length && (
+        <div className="selbar">
+          {allFiltered
+            ? <>All <b>{fmtInt(total)}</b> rows matching the current filter are selected. <a onClick={clearSelection}>Clear selection</a></>
+            : <>All <b>{rows.length}</b> rows on this page are selected. <a onClick={() => setAllFiltered(true)}>Select all {fmtInt(total)} matching the filter</a></>}
+        </div>
+      )}
 
       <div className="gridscroll">
         <table className="grid">
           <thead>
             <tr>
+              {canDelete && (
+                <th style={{ width: 34, cursor: 'default', textAlign: 'center' }}>
+                  <input type="checkbox" checked={allPageSelected} onChange={togglePage}
+                    ref={el => { if (el) el.indeterminate = !allPageSelected && (allFiltered || pageIds.some(id => selected.has(id))) }}
+                    title="Select all rows on this page" />
+                </th>
+              )}
               <th style={{ cursor: 'default' }}>No</th>
               {cols.map(c => {
                 const si = sorts.findIndex(s => s.field === c)
@@ -241,16 +304,25 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td className="num">{offset + i + 1}</td>
-                {cols.map(c => (
-                  <td key={c} className={fieldsByName.get(c)?.type === 'number' ? 'num' : ''}>{fmt(c, r[c])}</td>
-                ))}
-              </tr>
-            ))}
+            {rows.map((r, i) => {
+              const id = Number(r.__id)
+              const sel = rowSelected(id)
+              return (
+                <tr key={i} className={sel ? 'rowsel' : ''}>
+                  {canDelete && (
+                    <td style={{ textAlign: 'center' }}>
+                      <input type="checkbox" checked={sel} onChange={() => toggleRow(id)} title="Select row" />
+                    </td>
+                  )}
+                  <td className="num">{offset + i + 1}</td>
+                  {cols.map(c => (
+                    <td key={c} className={fieldsByName.get(c)?.type === 'number' ? 'num' : ''}>{fmt(c, r[c])}</td>
+                  ))}
+                </tr>
+              )
+            })}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={cols.length + 1} style={{ color: 'var(--muted)', padding: 24 }}>No rows for the current filters.</td></tr>
+              <tr><td colSpan={cols.length + (canDelete ? 2 : 1)} style={{ color: 'var(--muted)', padding: 24 }}>No rows for the current filters.</td></tr>
             )}
           </tbody>
         </table>
@@ -271,6 +343,34 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
           <button disabled={page >= pages} onClick={() => setOffset((pages - 1) * pageSize)}>»</button>
         </div>
       </div>
+
+      {/* delete confirmation (FR-R14) */}
+      {confirm && (
+        <div className="modalwrap" onClick={() => !deleting && setConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Delete {fmtInt(confirm.count)} row{confirm.count === 1 ? '' : 's'}?</h3>
+            <p>
+              This permanently removes {confirm.mode === 'filter'
+                ? <><b>every row matching the current filter</b></>
+                : <><b>{fmtInt(confirm.count)} selected row{confirm.count === 1 ? '' : 's'}</b></>} from
+              {' '}<b>{report.title}</b>. This cannot be undone. The deletion is recorded in the audit log.
+            </p>
+            {confirm.mode === 'filter' && (
+              <div className="fld">
+                <label>Type DELETE to confirm</label>
+                <input autoFocus value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder="DELETE" />
+              </div>
+            )}
+            {error && <div className="err" style={{ marginBottom: 10 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn o" disabled={deleting} onClick={() => { setConfirm(null); setConfirmText('') }}>Cancel</button>
+              <button className="btn r" disabled={deleting || (confirm.mode === 'filter' && confirmText !== 'DELETE')} onClick={doDelete}>
+                {deleting ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
