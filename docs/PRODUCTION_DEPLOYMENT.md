@@ -107,12 +107,55 @@ starting another web server — see step 5.
 
 ## 2. Get the code onto both hosts
 
-On **both** 172.28.80.50 and 172.28.80.51:
+### 2.1 Give each host repo access (SSH) — one-time per host
+
+The clone URL uses the SSH **alias** `github-bcinventory` (not a real hostname). Each host must
+define that alias and hold a key authorised on the repo. A fresh ECS host has neither, so the
+clone fails with `Could not resolve hostname github-bcinventory`, `Permission denied (publickey)`
+or `Host key verification failed`. Set it up once **on each host**:
+
+```bash
+# 1. Generate a deploy key unique to this host
+ssh-keygen -t ed25519 -f ~/.ssh/bcinventory_deploy -N '' -C "bc-inventory-$(hostname)"
+
+# 2. Define the github-bcinventory alias
+cat >> ~/.ssh/config <<'EOF'
+Host github-bcinventory
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/bcinventory_deploy
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+
+# 3. Print the PUBLIC key to register on GitHub
+cat ~/.ssh/bcinventory_deploy.pub
+```
+
+In GitHub: **repo → Settings → Deploy keys → Add deploy key**, paste that public key, leave
+**Allow write access unchecked** (production only pulls). GitHub accepts a given public key once,
+so generate a **separate** key per host (the command above already does). Verify:
+
+```bash
+ssh -T git@github-bcinventory   # "Hi …/Inventory-Item! You've successfully authenticated" (shell-access notice is fine)
+```
+
+> Prefer not to use SSH? Clone over HTTPS with a personal access token instead:
+> `git clone https://github.com/dwsitproject-hub/Inventory-Item.git /opt/bc-inventory` and enter a
+> PAT when prompted. The rest of the runbook is unchanged.
+
+### 2.2 Clone (or update) the repo
+
+On **both** 172.28.80.50 and 172.28.80.51 — this block is safe to re-run (it updates an existing
+checkout rather than failing), and it does **not** hide clone errors:
 
 ```bash
 sudo mkdir -p /opt/bc-inventory && sudo chown "$USER" /opt/bc-inventory
-git clone git@github-bcinventory:dwsitproject-hub/Inventory-Item.git /opt/bc-inventory 2>/dev/null \
-  || (cd /opt/bc-inventory && git fetch origin)
+if [ -d /opt/bc-inventory/.git ]; then
+  cd /opt/bc-inventory && git fetch origin
+else
+  git clone git@github-bcinventory:dwsitproject-hub/Inventory-Item.git /opt/bc-inventory
+fi
 cd /opt/bc-inventory && git checkout main && git pull --ff-only
 git rev-parse --short HEAD          # note the commit you are deploying
 ```
