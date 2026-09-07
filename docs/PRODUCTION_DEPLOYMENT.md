@@ -285,6 +285,14 @@ SMTP_USER=
 SMTP_PASSWORD=
 ```
 
+Before moving on, confirm you actually changed the defaults — `.env.example` ships `DB_USER=bcapp`,
+and leaving it makes the app fail at startup with `password authentication failed for user "bcapp"`:
+
+```bash
+grep -E '^DB_(USER|PASSWORD|HOST)=' .env
+# DB_USER must be bcapp_rw (NOT the example's bcapp), DB_PASSWORD its password, DB_HOST reachable.
+```
+
 ### 3.3 Apply the schema with the owner account
 
 `bcapp_rw` cannot create or alter tables, so the first-time schema (and any later schema change)
