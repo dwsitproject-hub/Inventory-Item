@@ -174,6 +174,13 @@ tested commit), check that out on both hosts so they match exactly.
 > `-U <privileged account>` fails with `bash: privileged: No such file or directory`. Run each `cd`
 > on its own line too, so a paste can't merge it into the next command's arguments.
 
+This needs the `psql` client. A fresh host may only have the wrapper, which errors with
+`You must install at least one postgresql-client-<version> package`. Either install it once:
+
+```bash
+sudo apt-get update && sudo apt-get install -y postgresql-client
+```
+
 Run the `cd` first, then the `psql` (two separate lines):
 
 ```bash
@@ -185,7 +192,20 @@ psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U PGADMIN -d
      -v app_password='NEW_BCAPP_RW_PASSWORD' -f create-app-role.sql
 ```
 
+Or, to avoid a host install, run the same thing from a container (Docker is already present):
+
+```bash
+cd /opt/bc-inventory/deploy/db
+docker run --rm -e PGPASSWORD='PGADMIN_PW' \
+  -v "$PWD/create-app-role.sql:/create-app-role.sql:ro" \
+  postgres:16 \
+  psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U PGADMIN -d bcinventory \
+       -v app_password='NEW_BCAPP_RW_PASSWORD' -f /create-app-role.sql
+```
+
 - `PGADMIN` → the ApsaraDB **privileged** account (Alibaba console → RDS → Accounts if unsure).
+  Replace the literal word `PGADMIN` — leaving it fails cleanly with `role "PGADMIN" does not exist`.
+- `PGADMIN_PW` → that account's password (container form only; the plain `psql` prompts for it).
 - `NEW_BCAPP_RW_PASSWORD` → the new `bcapp_rw` password you chose — letters/digits only.
 
 Pass the password **bare** in single quotes — no inner quotes (the script refuses a quoted value).
