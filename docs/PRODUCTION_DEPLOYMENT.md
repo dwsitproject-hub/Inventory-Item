@@ -44,7 +44,7 @@ Collect these and write them into a secure note (not into any tracked file):
 | New `bcapp_rw` password | You invent it — letters/digits only (avoid `$ # space '`) |
 | New `JWT_KEY` | `openssl rand -base64 48` |
 | New seed admin / site passwords | ≥10 chars, meet the policy |
-| Production hostname | e.g. `it-inventory.kpndomain.com` |
+| Production hostname | e.g. `it-inventory.energi-up.com` |
 | TLS certificate + key | For that hostname |
 | SMTP relay (optional) | Host, port, whether it needs TLS/credentials |
 | **DWS Hub SSO** — production issuer | The **production** Hub base URL, e.g. `https://dwshub.kpndomain.com`. Must exactly match the `issuer` in that Hub's discovery document — confirm it with the DWS Hub team (staging was `http://test-dwshub.kpndomain.com`). |
@@ -58,9 +58,9 @@ has something to talk to:
 
 - `sso_mode` = `OIDC (strict)`
 - `oauth_client_id` = the new production client id (matches `SSO_CLIENT_ID` in the `.env`)
-- **OIDC Redirect URIs** includes **exactly** `https://it-inventory.kpndomain.com/auth/sso/callback`
+- **OIDC Redirect URIs** includes **exactly** `https://it-inventory.energi-up.com/auth/sso/callback`
   (HTTPS — the production callback; no trailing slash)
-- **Target URL** = `https://it-inventory.kpndomain.com/`
+- **Target URL** = `https://it-inventory.energi-up.com/`
 
 The Hub tile drives an IdP-initiated launch: the Hub runs `authorize` with the user's Hub session
 and redirects to the callback with `code` + `code_verifier`. Over production HTTPS that redirect is
@@ -273,7 +273,7 @@ API_PORT=8091                 # the free port you chose in step 1
 
 JWT_KEY=<openssl rand -base64 48>
 JWT_LIFETIME_MINUTES=120
-CORS_ORIGINS=https://it-inventory.kpndomain.com   # the production origin(s), comma-separated
+CORS_ORIGINS=https://it-inventory.energi-up.com   # the production origin(s), comma-separated
 
 # DWS Hub single sign-on. Leave SSO_ENABLED=false to launch without SSO and turn it on later.
 # Issuer and callback are HTTPS in production; the client id is the production one, not the
@@ -281,7 +281,7 @@ CORS_ORIGINS=https://it-inventory.kpndomain.com   # the production origin(s), co
 SSO_ENABLED=true
 SSO_ISSUER=https://dwshub.kpndomain.com                 # the production Hub issuer (confirm exactly)
 SSO_CLIENT_ID=<production oauth_client_id from Hub>
-SSO_REDIRECT_URI=https://it-inventory.kpndomain.com/auth/sso/callback
+SSO_REDIRECT_URI=https://it-inventory.energi-up.com/auth/sso/callback
 SSO_SCOPE=openid profile email
 
 SEED_ADMIN_PASSWORD=<strong, ≥10 chars>
@@ -444,8 +444,8 @@ sudo nginx -t && sudo systemctl reload nginx
 Confirm the public endpoint and that HTTP redirects:
 
 ```bash
-curl -sI https://it-inventory.kpndomain.com/ | head -1                 # 200
-curl -sI http://it-inventory.kpndomain.com/  | grep -i location        # 301 -> https
+curl -sI https://it-inventory.energi-up.com/ | head -1                 # 200
+curl -sI http://it-inventory.energi-up.com/  | grep -i location        # 301 -> https
 ```
 
 ---
