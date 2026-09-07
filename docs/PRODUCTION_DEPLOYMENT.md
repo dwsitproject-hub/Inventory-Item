@@ -194,7 +194,17 @@ tested commit), check that out on both hosts so they match exactly.
 > Confirm the port is reachable first (whitelist):
 > `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/172.28.92.66/5432' && echo OPEN || echo BLOCKED`.
 
-### 3.1 Create the least-privilege role (AR-06)
+> **Run the sub-steps in this order: 3.2 (`.env`) → 3.3 (migrate as owner) → 3.1 (create + grant
+> the role).** The role script grants on the schemas and tables the migrate creates, and revokes
+> writes on the audit table, so those objects must exist **first**. If you run 3.1 before the
+> migrate, the grant loop hits `schema … does not exist`, psql continues, and the role ends up with
+> login but **no privileges** — the app then crashes with `permission denied for schema auth`. The
+> script is idempotent, so the fix is simply to **re-run 3.1** after the migrate.
+
+### 3.1 Create and grant the least-privilege role (AR-06)
+
+> **Run this _after_ 3.3 (the migrate).** It is safe to re-run at any time (e.g. after a later
+> schema change) and re-applies the grants to whatever objects now exist.
 
 > **Placeholders in this runbook are ALL-CAPS words like `PGADMIN`.** Replace them with real values
 > — do **not** paste `< >` brackets into a shell: `<` is bash's input-redirect operator, so
