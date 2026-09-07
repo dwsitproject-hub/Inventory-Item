@@ -186,6 +186,13 @@ tested commit), check that out on both hosts so they match exactly.
 > Verify: `docker run --rm alpine nslookup <RDS-host>` returns the **private** IP (e.g. 172.28.92.66),
 > not a public/IPv6 one. Confirm the host resolver itself with
 > `resolvectl status | grep 'DNS Server'` (should be the internal DNS, e.g. 100.100.2.136/138).
+>
+> **If it still fails on an IPv6 address after DNS is correct:** the RDS hostname also publishes an
+> **AAAA** record (a public/Cloudflare IPv6), and Npgsql prefers IPv6 while the container has no IPv6
+> route. Pin the connection to the private IPv4 — set `DB_HOST` to it in `deploy/backend/.env`
+> (`sed -i 's|^DB_HOST=.*|DB_HOST=172.28.92.66|' .env`), which the migrate and the app both read.
+> Confirm the port is reachable first (whitelist):
+> `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/172.28.92.66/5432' && echo OPEN || echo BLOCKED`.
 
 ### 3.1 Create the least-privilege role (AR-06)
 
@@ -243,7 +250,7 @@ cd /opt/bc-inventory/deploy/backend && cp -n .env.example .env && nano .env && c
 Set, for production:
 
 ```
-DB_HOST=pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com
+DB_HOST=pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com   # or the private IP (172.28.92.66) if the name resolves to an unreachable IPv6 — see the DNS note above
 DB_PORT=5432
 DB_NAME=bcinventory
 DB_USER=bcapp_rw
