@@ -172,27 +172,24 @@ tested commit), check that out on both hosts so they match exactly.
 > `/etc/resolv.conf` is the systemd-resolved stub (`127.0.0.53`), Docker can't use it and falls back
 > to public DNS (8.8.8.8), which returns a wrong/public answer for the *internal* RDS name — the
 > connection then fails with `SocketException (101): Network unreachable` (often on an IPv6 address).
-> The host itself resolves fine; only containers are affected. Fix once by giving the Docker daemon
-> the VPC resolvers (Alibaba internal DNS shown; use your environment's):
+> The host itself resolves fine; only containers are affected.
 >
-> ```bash
-> sudo cat /etc/docker/daemon.json 2>/dev/null || echo "(none yet)"
-> # if none:
-> echo '{ "dns": ["100.100.2.136", "100.100.2.138"] }' | sudo tee /etc/docker/daemon.json
-> # if it exists, merge the "dns" key into the existing object instead, then:
-> sudo systemctl restart docker
-> ```
+> **Preferred fix — pin `DB_HOST` to the private IPv4** (`deploy/backend/.env`), which sidesteps
+> container DNS entirely and needs no daemon change:
+> `sed -i 's|^DB_HOST=.*|DB_HOST=172.28.92.66|' .env`. Confirm the port is reachable first
+> (whitelist): `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/172.28.92.66/5432' && echo OPEN || echo BLOCKED`.
+> This also handles the case where the RDS name publishes a public **AAAA** (IPv6) record that
+> Npgsql prefers but the container cannot route (`Network unreachable` on an IPv6 address).
 >
-> Verify: `docker run --rm alpine nslookup <RDS-host>` returns the **private** IP (e.g. 172.28.92.66),
-> not a public/IPv6 one. Confirm the host resolver itself with
-> `resolvectl status | grep 'DNS Server'` (should be the internal DNS, e.g. 100.100.2.136/138).
->
-> **If it still fails on an IPv6 address after DNS is correct:** the RDS hostname also publishes an
-> **AAAA** record (a public/Cloudflare IPv6), and Npgsql prefers IPv6 while the container has no IPv6
-> route. Pin the connection to the private IPv4 — set `DB_HOST` to it in `deploy/backend/.env`
-> (`sed -i 's|^DB_HOST=.*|DB_HOST=172.28.92.66|' .env`), which the migrate and the app both read.
-> Confirm the port is reachable first (whitelist):
-> `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/172.28.92.66/5432' && echo OPEN || echo BLOCKED`.
+> **⚠ Do NOT `systemctl restart docker` on a shared host.** It restarts **every** container on the
+> box, and any other app's container whose restart policy isn't `always`/`unless-stopped` stays
+> **down** afterward — a self-inflicted outage of unrelated apps (this bit us: pm.energi-up.com's
+> API on this host went 502 because its container did not come back). With `DB_HOST` pinned to the
+> IP above you never need to touch the daemon. If you genuinely must set daemon-wide DNS, give
+> **only this app's** container the resolver instead — add `dns: ["100.100.2.136","100.100.2.138"]`
+> to the `api` service in `deploy/backend/docker-compose.yml`, or pass `--dns 100.100.2.136` to the
+> one-off `docker run`. If the daemon was already restarted and other apps are now 502, recover
+> them with `docker ps -a` → `docker start <name>` for each `Exited` container.
 
 > **Run the sub-steps in this order: 3.2 (`.env`) → 3.3 (migrate as owner) → 3.1 (create + grant
 > the role).** The role script grants on the schemas and tables the migrate creates, and revokes
