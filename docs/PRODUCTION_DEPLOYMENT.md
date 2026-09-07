@@ -425,13 +425,22 @@ sudo cp /opt/bc-inventory/deploy/frontend/host-nginx-vhost.conf /etc/nginx/sites
 sudo nano /etc/nginx/sites-available/bc-inventory.conf
 ```
 
-In that file:
-- set `server_name` to the production hostname;
-- set `proxy_pass http://127.0.0.1:8090;` (your `WEB_PORT`);
-- **uncomment the `listen 443 ssl` server block and the HTTP→HTTPS redirect**, and point
-  `ssl_certificate` / `ssl_certificate_key` at the installed cert and key;
-- **uncomment the `Strict-Transport-Security` header** (it ships commented in both the host vhost
-  and `nginx.staging.conf`) now that TLS terminates in front.
+The shipped file is the **staging** vhost: an active `listen 80` block that *serves* the site, plus
+a commented TLS block and a commented redirect. For production you want the reverse — 443 serves,
+80 only redirects — so do **not** just uncomment the two blocks (that leaves two `listen 80` blocks
+for the same `server_name` and `nginx -t` fails). Instead make the file read as **exactly two**
+server blocks:
+
+- **`listen 80`** → only `return 301 https://$host$request_uri;` (no `location`, no proxy).
+- **`listen 443 ssl`** → serves the site: the `location /` proxy, all the AR-05 headers **plus**
+  the now-uncommented `Strict-Transport-Security` header, and `ssl_certificate` /
+  `ssl_certificate_key` pointing at the installed cert and key.
+
+In both blocks set `server_name` to the production hostname, and in the 443 `location` set
+`proxy_pass http://127.0.0.1:8090;` (your `WEB_PORT` — the shipped file still says `8088`). Do
+**not** add `default_server` to any `listen` line: another app on this host already owns the
+default, and a second one breaks `nginx -t`. The cert and key must exist at their paths before you
+test, or nginx refuses to load.
 
 > Two nginx layers carry the security headers: the host vhost (public) and the web container's
 > `nginx.staging.conf` (internal). Uncomment HSTS in both so it is present whichever layer answers.
