@@ -391,6 +391,17 @@ nano /opt/bc-inventory/deploy/frontend/nginx.staging.conf
 - set the `/api/` proxy target to the backend host and port you chose:
   `proxy_pass http://172.28.80.51:8091$request_uri;` — this must match `API_BIND:API_PORT` from 3.2.
 
+`nginx.staging.conf` is tracked in git, so once you edit it `update.sh` refuses to run
+(`!! tracked files have local edits`) because it does a `git pull`. Tell git to keep your local
+version and stop reporting it as changed — the container mounts the file at runtime, so your edit
+stays live and future pulls still fast-forward:
+
+```bash
+git -C /opt/bc-inventory update-index --skip-worktree deploy/frontend/nginx.staging.conf
+```
+
+(Reverse with `--no-skip-worktree` only if you later need to take an upstream change to that file.)
+
 ### 5.2 Build and start the web container
 
 ```bash
