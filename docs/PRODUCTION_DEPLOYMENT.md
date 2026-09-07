@@ -80,16 +80,24 @@ sudo ss -lntp | sort -t: -k2 -n
 
 Read the LISTEN list and choose:
 
-| Setting | Purpose | Host | Must be free |
+| Setting | Purpose | Host | Chosen port |
 |---|---|---|---|
-| `WEB_PORT` | web container publish (behind the host nginx) | FE 172.28.80.50 | pick a free high port, e.g. 8090 |
-| host nginx `443` / `80` | public HTTPS / HTTP-redirect | FE 172.28.80.50 | 443 free; 80 free or already the host nginx |
-| `API_PORT` | API container publish | BE 172.28.80.51 | pick a free high port, e.g. 8091 |
+| `WEB_PORT` | web container publish (behind the host nginx) | FE 172.28.80.50 | **8090** (verified free) |
+| host nginx `443` / `80` | public HTTPS / HTTP-redirect | FE 172.28.80.50 | already the host nginx |
+| `API_PORT` | API container publish | BE 172.28.80.51 | **8091** (verified free) |
 
-Confirm a specific candidate is free before using it (empty output = free):
+> **Chosen from the 2026-09-07 scan.** On FE (172.28.80.50) nginx already owns 80 + 443 (use a
+> vhost, step 5.3); taken high ports were 3010/3020/3040/3042/3080/3081/3100/8000/8080/8081/8443/9999,
+> so **8090** is free for `WEB_PORT`. On BE (172.28.80.51) taken ports were
+> 3000/3003/4000/4001/5000/5010/5050/5422/5434/8001/8080/13000, so **8091** is free for `API_PORT`.
+> Nothing listens on 5432 locally on BE — correct, the database is the managed ApsaraDB instance,
+> not this host (its name "ECS-DB" notwithstanding).
+
+Confirm each is still free immediately before binding (empty output = free):
 
 ```bash
-sudo ss -lntp | grep -w 8090 || echo "8090 is free"
+sudo ss -lntp | grep -w 8090 || echo "8090 is free"   # on FE 172.28.80.50
+sudo ss -lntp | grep -w 8091 || echo "8091 is free"   # on BE 172.28.80.51
 ```
 
 If the host's nginx already owns port 80/443, you will add a **virtual host** to it rather than
@@ -377,8 +385,9 @@ on a production host it targets production.
 |---|---|---|---|
 | FE 172.28.80.50 | 443 | 0.0.0.0 | public HTTPS (host nginx) |
 | FE 172.28.80.50 | 80 | 0.0.0.0 | HTTP → HTTPS redirect |
-| FE 172.28.80.50 | `WEB_PORT` (e.g. 8090) | 127.0.0.1 | web container (host nginx proxies to it) |
-| BE 172.28.80.51 | `API_PORT` (e.g. 8091) | 172.28.80.51 | API container (frontend host only) |
+| FE 172.28.80.50 | **8090** (`WEB_PORT`) | 127.0.0.1 | web container (host nginx proxies to it) |
+| BE 172.28.80.51 | **8091** (`API_PORT`) | 172.28.80.51 | API container (frontend host only) |
 | ApsaraDB | 5432 | instance | database (whitelist FE + BE) |
 
-Confirm each host port is free with `sudo ss -lntp | grep -w <port>` before binding it.
+Ports 8090/8091 were confirmed free from the 2026-09-07 scan of both hosts. Re-confirm with
+`sudo ss -lntp | grep -w <port>` before binding, in case something new started in the interim.
