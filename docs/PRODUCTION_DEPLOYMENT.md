@@ -167,6 +167,26 @@ tested commit), check that out on both hosts so they match exactly.
 
 ## 3. Prepare the database (once, from the backend host)
 
+> **Container DNS (do this first if the host uses systemd-resolved).** The app, the migrate and the
+> container `psql` option all resolve the RDS hostname **from inside a container**. If the host's
+> `/etc/resolv.conf` is the systemd-resolved stub (`127.0.0.53`), Docker can't use it and falls back
+> to public DNS (8.8.8.8), which returns a wrong/public answer for the *internal* RDS name — the
+> connection then fails with `SocketException (101): Network unreachable` (often on an IPv6 address).
+> The host itself resolves fine; only containers are affected. Fix once by giving the Docker daemon
+> the VPC resolvers (Alibaba internal DNS shown; use your environment's):
+>
+> ```bash
+> sudo cat /etc/docker/daemon.json 2>/dev/null || echo "(none yet)"
+> # if none:
+> echo '{ "dns": ["100.100.2.136", "100.100.2.138"] }' | sudo tee /etc/docker/daemon.json
+> # if it exists, merge the "dns" key into the existing object instead, then:
+> sudo systemctl restart docker
+> ```
+>
+> Verify: `docker run --rm alpine nslookup <RDS-host>` returns the **private** IP (e.g. 172.28.92.66),
+> not a public/IPv6 one. Confirm the host resolver itself with
+> `resolvectl status | grep 'DNS Server'` (should be the internal DNS, e.g. 100.100.2.136/138).
+
 ### 3.1 Create the least-privilege role (AR-06)
 
 > **Placeholders in this runbook are ALL-CAPS words like `PGADMIN`.** Replace them with real values
