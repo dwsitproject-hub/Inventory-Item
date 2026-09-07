@@ -169,11 +169,24 @@ tested commit), check that out on both hosts so they match exactly.
 
 ### 3.1 Create the least-privilege role (AR-06)
 
+> **Placeholders in this runbook are ALL-CAPS words like `PGADMIN`.** Replace them with real values
+> — do **not** paste `< >` brackets into a shell: `<` is bash's input-redirect operator, so
+> `-U <privileged account>` fails with `bash: privileged: No such file or directory`. Run each `cd`
+> on its own line too, so a paste can't merge it into the next command's arguments.
+
+Run the `cd` first, then the `psql` (two separate lines):
+
 ```bash
 cd /opt/bc-inventory/deploy/db
-psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U <privileged account> -d bcinventory \
-     -v app_password='<the new bcapp_rw password>' -f create-app-role.sql
 ```
+
+```bash
+psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U PGADMIN -d bcinventory \
+     -v app_password='NEW_BCAPP_RW_PASSWORD' -f create-app-role.sql
+```
+
+- `PGADMIN` → the ApsaraDB **privileged** account (Alibaba console → RDS → Accounts if unsure).
+- `NEW_BCAPP_RW_PASSWORD` → the new `bcapp_rw` password you chose — letters/digits only.
 
 Pass the password **bare** in single quotes — no inner quotes (the script refuses a quoted value).
 Check the output: `rolsuper` must be `f`, and the audit line must read `can_read=1, can_delete=0`.
@@ -232,9 +245,15 @@ is applied by the privileged account. The overrides go in the **shell, before** 
 
 ```bash
 cd /opt/bc-inventory/deploy/backend
-DB_USER=<privileged account> DB_PASSWORD='<privileged pw>' DB_AUTO_MIGRATE=true \
+```
+
+```bash
+DB_USER=PGADMIN DB_PASSWORD='PGADMIN_PW' DB_AUTO_MIGRATE=true \
   docker compose run --rm api --migrate
 ```
+
+`PGADMIN` / `PGADMIN_PW` are the same ApsaraDB privileged account and password as 3.1 (real values,
+no `< >` brackets).
 
 It should print `[migrate] schema applied and seeded — exiting without serving.` This also seeds
 the two initial accounts from `SEED_ADMIN_PASSWORD` / `SEED_SITE_PASSWORD`.
@@ -397,8 +416,11 @@ each identifies as the right template and the row counts match the files.
 If a release misbehaves, roll the code back on the affected host and rebuild:
 
 ```bash
-cd /opt/bc-inventory && git checkout <previous good commit> && cd deploy && ./update.sh <tier>
+cd /opt/bc-inventory && git checkout PREV_GOOD_COMMIT && cd deploy && ./update.sh TIER
 ```
+
+`PREV_GOOD_COMMIT` = the commit hash to roll back to; `TIER` = `backend` or `frontend` (real
+values, no `< >` brackets).
 
 The database is not rolled back by this. A schema change is forward-only; if one caused the
 problem, restore from an ApsaraDB backup/snapshot taken **before** the migration (take one in the
