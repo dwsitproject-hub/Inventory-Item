@@ -9,6 +9,9 @@ public record CompanyRequest(string Name, bool Active, string? LogoBase64, strin
 /// <summary>Set which companies a user is assigned to.</summary>
 public record SetCompaniesRequest(long[]? CompanyIds);
 
+/// <summary>A row of the company list (typed so serialization is deterministic).</summary>
+public record CompanyRow(long Id, string Name, bool Active, bool HasLogo, long UserCount);
+
 /// <summary>
 /// Multi-tenant company (PT) management. A company owns users and uploaded data and carries the
 /// logo shown in the header after login. Managing companies and assigning them to users is
@@ -24,12 +27,12 @@ public static class Companies
     {
         if (Guard(scope) is { } g) return g;
         await using var con = await ds.OpenConnectionAsync();
-        var rows = await con.QueryAsync("""
+        var rows = (await con.QueryAsync<CompanyRow>("""
             select c.id, c.name, c.active,
-                   (c.logo is not null) as "hasLogo",
-                   (select count(*) from auth.user_companies uc where uc.company_id = c.id) as "userCount"
+                   (c.logo is not null) as haslogo,
+                   (select count(*) from auth.user_companies uc where uc.company_id = c.id) as usercount
             from master.companies c order by c.name
-            """);
+            """)).ToList();
         return Results.Ok(rows);
     }
 

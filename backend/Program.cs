@@ -267,7 +267,8 @@ api.MapPost("/admin/tpb-permits", (PermitRequest req, HttpContext ctx) =>
     Admin.AddPermit(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 
 // ---- companies (multi-tenant): management is Super-Admin-only (enforced in Companies) ----
-api.MapGet("/companies", (HttpContext ctx) => Companies.List(ds, Auth.Scope(ctx.User))).RequireAuthorization();
+api.MapGet("/companies", (System.Security.Claims.ClaimsPrincipal user) =>
+    Companies.List(ds, Auth.Scope(user))).RequireAuthorization();
 api.MapPost("/companies", (CompanyRequest req, HttpContext ctx) =>
     Companies.Create(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 api.MapPut("/companies/{id:long}", (long id, CompanyRequest req, HttpContext ctx) =>
