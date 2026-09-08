@@ -259,8 +259,11 @@ public static class Reports
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
             throw new ArgumentException("Field name out of range.", nameof(name));
+        // '+' occurs in a real catalogue header ("Realization of Good Receipts / (+/-)"); it is
+        // harmless inside a single-quoted JSONB key and the whitelist against the report's own
+        // fields is the real control. Omitting it 500'd any view that selected or sorted that column.
         foreach (var c in name)
-            if (!(char.IsLetterOrDigit(c) || c is ' ' or '.' or '/' or '-' or '_' or '(' or ')' or '%' or '"' or '\''))
+            if (!(char.IsLetterOrDigit(c) || c is ' ' or '.' or '/' or '-' or '_' or '(' or ')' or '%' or '+' or '"' or '\''))
                 throw new ArgumentException($"Field name contains an unexpected character: {name}", nameof(name));
         return name.Replace("'", "''");
     }
