@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using Dapper;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -26,11 +28,16 @@ public static class Sso
     private static IConfiguration _cfg = default!;
     private static readonly HttpClient _http = CreateHttpClient();
 
-    // The DWS Hub hostname can resolve to an IPv6 (AAAA) address that has no route from inside the
-    // container. .NET prefers IPv6 and hangs on it until the request times out (seen as SSO-002 /
-    // "Could not reach the identity provider" while a plain wget to the same name succeeds over
-    // IPv4). Force every Hub call to connect over IPv4 — the HttpClient analogue of pinning
-    // DB_HOST to the private IPv4 for the database.
+    // Two container-specific hazards on the way to the Hub, both of which manifest as a 15-second
+    // hang and an SSO-002 ("could not reach the identity provider") while a plain wget to the same
+    // URL succeeds:
+    //   1. The Hub name may carry an IPv6 (AAAA) record with no route from the container; .NET
+    //      would prefer it. The ConnectCallback forces IPv4.
+    //   2. Validating the Hub's TLS certificate, .NET may try to fetch a missing intermediate or a
+    //      CRL over the network (AIA/CRL). The container usually cannot reach those URLs, and the
+    //      per-download timeout is 15s — exactly the symptom. DisableCertificateDownloads stops
+    //      those fetches; the chain nginx serves validates offline. Revocation is left unchecked
+    //      (the default for HttpClient), which also avoids an OCSP round trip.
     private static HttpClient CreateHttpClient()
     {
         var handler = new SocketsHttpHandler
@@ -46,6 +53,14 @@ public static class Sso
                     return new NetworkStream(socket, ownsSocket: true);
                 }
                 catch { socket.Dispose(); throw; }
+            },
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                CertificateChainPolicy = new X509ChainPolicy
+                {
+                    RevocationMode = X509RevocationMode.NoCheck,
+                    DisableCertificateDownloads = true,
+                }
             }
         };
         return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
