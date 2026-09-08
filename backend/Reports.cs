@@ -79,12 +79,24 @@ public static class Reports
             where.Append(" and l.entity_id = @scopeEntity");
             p.Add("scopeEntity", scope.EntityId);
         }
+        // Company (tenant) scope: a non-Super-Admin only ever sees their assigned companies.
+        if (!scope.AllCompanies)
+        {
+            where.Append(" and l.company_id = any(@scopeCompanies)");
+            p.Add("scopeCompanies", scope.CompanyIds);
+        }
         var f = req.Filters ?? new();
         if (f.TryGetValue("entityId", out var entS) && long.TryParse(entS, out var ent))
         {
             if (!scope.AllEntities && ent != scope.EntityId)
                 return (null, Results.Problem(statusCode: 403, title: "SCOPE-001", detail: "Requested entity outside your scope."));
             where.Append(" and l.entity_id = @ent"); p.Add("ent", ent);
+        }
+        if (f.TryGetValue("companyId", out var coS) && long.TryParse(coS, out var co))
+        {
+            if (!scope.AllCompanies && !scope.CompanyIds.Contains(co))
+                return (null, Results.Problem(statusCode: 403, title: "SCOPE-002", detail: "Requested company outside your scope."));
+            where.Append(" and l.company_id = @co"); p.Add("co", co);
         }
         if (f.TryGetValue("dateFrom", out var df) && DateOnly.TryParse(df, out var dFrom))
         { where.Append(" and l.doc_date >= @dFrom"); p.Add("dFrom", dFrom); }

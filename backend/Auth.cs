@@ -8,7 +8,10 @@ using Npgsql;
 namespace BcInventory.Api;
 
 public record LoginRequest(string Email, string Password);
-public record UserScope(long UserId, string Email, string FullName, string Role, bool AllEntities, long? EntityId, long? SiteId);
+public record UserScope(long UserId, string Email, string FullName, string Role, bool AllEntities, long? EntityId, long? SiteId,
+    // Multi-tenant company scope. Super Admin spans all companies (AllCompanies); every other user
+    // is restricted to CompanyIds. Data queries filter on this exactly like the entity scope.
+    bool AllCompanies, long[] CompanyIds);
 
 public static class Auth
 {
@@ -49,7 +52,13 @@ public static class Auth
     /// <summary>UserScope from a users-table row (dynamic from Dapper).</summary>
     public static UserScope ScopeOf(dynamic user) => new(
         (long)user.id, (string)user.email, (string)user.full_name, (string)user.role,
-        (bool)user.all_entities, (long?)user.entity_id, (long?)user.site_id);
+        (bool)user.all_entities, (long?)user.entity_id, (long?)user.site_id,
+        // Used for the audit actor only; the request-time company scope is resolved per request
+        // (Sessions.Resolve) with the real list, so an empty list here is harmless.
+        (string)user.role == SuperAdmin, Array.Empty<long>());
+
+    /// <summary>Role that spans every company and every entity by definition.</summary>
+    public const string SuperAdmin = "Super Admin";
 
     /// <summary>
     /// Mint a BC Inventory session for an authenticated account, and shape the login response.
@@ -121,7 +130,8 @@ public static class Auth
             C("email"), C("name"), C("role"),
             C("allEntities") == "true",
             long.TryParse(C("entityId"), out var e) ? e : null,
-            long.TryParse(C("siteId"), out var s) ? s : null);
+            long.TryParse(C("siteId"), out var s) ? s : null,
+            C("role") == SuperAdmin, Array.Empty<long>());
     }
 
     public static async Task<IResult> Me(NpgsqlDataSource ds, ClaimsPrincipal principal)
@@ -131,12 +141,17 @@ public static class Auth
         var entities = (await con.QueryAsync("select id, code, name from master.entities order by name")).ToList();
         var sites = (await con.QueryAsync("""select id, entity_id as "entityId", name from master.sites order by name""")).ToList();
         var perms = await Permissions.Effective(scope.Role);
+        // Header logo: only when the user belongs to exactly one company that has a logo; null for
+        // Super Admin or a multi-company user (the header shows no company logo then).
+        var (companyId, companyName, companyLogo) = await Companies.HeaderLogo(con, scope);
         return Results.Ok(new
         {
-            user = new { scope.Email, scope.FullName, scope.Role, scope.AllEntities, scope.EntityId, scope.SiteId },
+            user = new { scope.Email, scope.FullName, scope.Role, scope.AllEntities, scope.EntityId, scope.SiteId,
+                         scope.AllCompanies, companyIds = scope.CompanyIds },
             permissions = perms.ToDictionary(k => k.Key, v => new { v.Value.View, v.Value.Insert, v.Value.Edit, v.Value.Delete }),
             entities,
-            sites
+            sites,
+            company = new { id = companyId, name = companyName, logo = companyLogo }
         });
     }
 }

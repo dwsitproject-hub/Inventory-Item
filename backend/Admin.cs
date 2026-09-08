@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace BcInventory.Api;
 
-public record CreateUserRequest(string Email, string FullName, string Role, bool AllEntities, long? EntityId, long? SiteId, string Password);
+public record CreateUserRequest(string Email, string FullName, string Role, bool AllEntities, long? EntityId, long? SiteId, string Password, long[]? CompanyIds);
 public record ResetPasswordRequest(string Password);
 public record StatusRequest(string Status);
 public record EntityRequest(string Code, string Name);
@@ -27,7 +27,13 @@ public static class Admin
         var users = await con.QueryAsync("""
             select u.id, u.email, u.full_name as "fullName", u.role, u.status,
                    u.all_entities as "allEntities", u.entity_id as "entityId", u.site_id as "siteId",
-                   e.name as "entityName", s.name as "siteName", u.created_at as "createdAt"
+                   e.name as "entityName", s.name as "siteName", u.created_at as "createdAt",
+                   coalesce((select array_agg(uc.company_id order by c.name)
+                             from auth.user_companies uc join master.companies c on c.id = uc.company_id
+                             where uc.user_id = u.id), '{}') as "companyIds",
+                   coalesce((select string_agg(c.name, ', ' order by c.name)
+                             from auth.user_companies uc join master.companies c on c.id = uc.company_id
+                             where uc.user_id = u.id), '') as "companyNames"
             from auth.users u
             left join master.entities e on e.id = u.entity_id
             left join master.sites s on s.id = u.site_id
@@ -49,6 +55,9 @@ public static class Admin
             return Results.Problem(statusCode: 403, title: "AUTH-003", detail: "Only a Super Admin can grant all-entities scope.");
         if (!req.AllEntities && req.EntityId is null)
             return Results.Problem(statusCode: 400, title: "VAL-001", detail: "entityId required unless allEntities.");
+        // Every non-Super-Admin must belong to at least one company; a Super Admin spans all.
+        if (req.Role != "Super Admin" && (req.CompanyIds is null || req.CompanyIds.Length == 0))
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "Assign at least one company (only a Super Admin spans all companies).");
         if (Passwords.Check(req.Password, req.Email) is { } pwErr)
             return Results.Problem(statusCode: 400, title: "VAL-001", detail: pwErr);
 
@@ -62,6 +71,11 @@ public static class Admin
             insert into auth.users (email, full_name, role, password_hash, all_entities, entity_id, site_id)
             values (@Email, @FullName, @Role, @hash, @AllEntities, @EntityId, @SiteId) returning id
             """, new { req.Email, req.FullName, req.Role, hash = BCrypt.Net.BCrypt.HashPassword(req.Password, 11), req.AllEntities, req.EntityId, req.SiteId });
+
+        if (req.CompanyIds is { Length: > 0 })
+            await con.ExecuteAsync(
+                "insert into auth.user_companies (user_id, company_id) select @id, unnest(@ids::bigint[]) on conflict do nothing",
+                new { id, ids = req.CompanyIds });
 
         await Notifications.Emit(con, "security", $"User created — {req.Email}",
             $"Role {req.Role}, scope {(req.AllEntities ? "all entities" : $"entity #{req.EntityId}")} · by {scope.Email}");

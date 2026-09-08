@@ -36,6 +36,13 @@ public static class Db
                 throw new InvalidOperationException(
                     "The database schema is behind this build (auth.users.tokens_valid_from is missing). " +
                     "Run the API once with --migrate using an account that owns the tables.");
+            var hasCompanies = await check.ExecuteScalarAsync<bool>(
+                "select to_regclass('master.companies') is not null and exists (select 1 from information_schema.columns " +
+                "where table_schema='bc' and table_name='document_lines' and column_name='company_id')");
+            if (!hasCompanies)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (multi-company support is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
             Console.WriteLine("[schema] verified (auto-migrate off — this account may not alter the schema)");
             return;
         }
@@ -65,6 +72,18 @@ public static class Db
                 permit_no text not null unique
             );
 
+            -- Multi-company (tenant) support. A company is the top-level owner of users and data:
+            -- PT SPC, PT Priscolin, etc. Its logo is shown in the header after login. Super Admin
+            -- spans all companies; every other user is assigned one or more via auth.user_companies.
+            create table if not exists master.companies (
+                id bigint generated always as identity primary key,
+                name text not null unique,
+                logo bytea,
+                logo_content_type text,
+                active boolean not null default true,
+                created_at timestamptz not null default now()
+            );
+
             create table if not exists auth.users (
                 id bigint generated always as identity primary key,
                 email text not null unique,
@@ -79,6 +98,14 @@ public static class Db
             );
             -- Links a local account to its DWS Hub identity (OIDC 'sub'), set on first SSO login.
             alter table auth.users add column if not exists sso_sub text unique;
+
+            -- Which companies a user may access (many-to-many). Super Admin ignores this and spans
+            -- all companies; every other role must be assigned at least one.
+            create table if not exists auth.user_companies (
+                user_id bigint not null references auth.users(id) on delete cascade,
+                company_id bigint not null references master.companies(id) on delete cascade,
+                primary key (user_id, company_id)
+            );
 
             -- configurable role → page → action matrix (Role Management)
             create table if not exists auth.role_permissions (
@@ -152,6 +179,12 @@ public static class Db
             );
             create index if not exists ix_lines_scope_date
                 on bc.document_lines (template, entity_id, doc_date desc, id);
+
+            -- Company each uploaded row belongs to (multi-tenant scoping; set at ingestion).
+            alter table ingest.ingestion_files add column if not exists company_id bigint references master.companies(id);
+            alter table bc.documents          add column if not exists company_id bigint references master.companies(id);
+            alter table bc.document_lines      add column if not exists company_id bigint references master.companies(id);
+            create index if not exists ix_lines_company on bc.document_lines (company_id);
 
             create schema if not exists app;
             create table if not exists app.saved_views (
@@ -243,6 +276,20 @@ public static class Db
             create trigger trg_audit_no_truncate
                 before truncate on audit.audit_events
                 for each statement execute function audit.no_mutation();
+
+            -- Multi-company backfill (idempotent). Seed the first company from what the system was
+            -- already used for, put every existing row and every non-Super-Admin user under it, so
+            -- turning multi-tenancy on does not orphan any data or lock anyone out.
+            insert into master.companies (name) values ('PT SPC') on conflict (name) do nothing;
+            update ingest.ingestion_files set company_id = (select min(id) from master.companies) where company_id is null;
+            update bc.documents            set company_id = (select min(id) from master.companies) where company_id is null;
+            update bc.document_lines        set company_id = (select min(id) from master.companies) where company_id is null;
+            insert into auth.user_companies (user_id, company_id)
+                select u.id, (select min(id) from master.companies)
+                from auth.users u
+                where u.role <> 'Super Admin'
+                  and not exists (select 1 from auth.user_companies uc where uc.user_id = u.id)
+                on conflict do nothing;
             """);
     }
 
@@ -329,6 +376,16 @@ public static class Db
                 e = entityId,
                 s = siteId
             });
+        // Seed the first company and put the (non-Super-Admin) site user under it. The Super Admin
+        // spans all companies and needs no assignment.
+        var companyId = await con.ExecuteScalarAsync<long>(
+            "insert into master.companies (name) values ('PT SPC') on conflict (name) do update set name = excluded.name returning id");
+        await con.ExecuteAsync("""
+            insert into auth.user_companies (user_id, company_id)
+            select id, @c from auth.users where role <> 'Super Admin'
+            on conflict do nothing
+            """, new { c = companyId });
+
         var custom = cfg?["Seed:AdminPassword"] is { Length: > 0 };
         Console.WriteLine("[seed] master data + 2 users created (admin@energi-up.com, bc.bontang@energi-up.com) — "
             + (custom ? "passwords from Seed__AdminPassword / Seed__SitePassword"

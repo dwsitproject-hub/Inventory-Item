@@ -266,16 +266,34 @@ api.MapPost("/admin/sites", (SiteRequest req, HttpContext ctx) =>
 api.MapPost("/admin/tpb-permits", (PermitRequest req, HttpContext ctx) =>
     Admin.AddPermit(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 
+// ---- companies (multi-tenant): management is Super-Admin-only (enforced in Companies) ----
+api.MapGet("/companies", (HttpContext ctx) => Companies.List(ds, Auth.Scope(ctx.User))).RequireAuthorization();
+api.MapPost("/companies", (CompanyRequest req, HttpContext ctx) =>
+    Companies.Create(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
+api.MapPut("/companies/{id:long}", (long id, CompanyRequest req, HttpContext ctx) =>
+    Companies.Update(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
+api.MapGet("/companies/{id:long}/logo", (long id) => Companies.Logo(ds, id)).RequireAuthorization();
+api.MapPut("/admin/users/{id:long}/companies", (long id, SetCompaniesRequest req, HttpContext ctx) =>
+    Companies.SetUserCompanies(ds, Auth.Scope(ctx.User), id, req.CompanyIds ?? Array.Empty<long>())).RequireAuthorization();
+// Companies the signed-in user may upload against (their own; Super Admin = all active).
+api.MapGet("/companies/pickable", async (HttpContext ctx) =>
+{
+    await using var con = await ds.OpenConnectionAsync();
+    return Results.Ok(await Companies.Pickable(con, Auth.Scope(ctx.User)));
+}).RequireAuthorization();
+
 api.MapGet("/ingestions", async (System.Security.Claims.ClaimsPrincipal user) =>
 {
-    if (await Permissions.Require(Auth.Scope(user), "ingestion", "view") is { } perr) return perr;
+    var scope = Auth.Scope(user);
+    if (await Permissions.Require(scope, "ingestion", "view") is { } perr) return perr;
     await using var con = await ds.OpenConnectionAsync();
-    var rows = await con.QueryAsync("""
+    var companyWhere = scope.AllCompanies ? "" : " where company_id = any(@companies)";
+    var rows = await con.QueryAsync($"""
         select id, file_name as "fileName", template, source, status,
                rows_total as "rowsTotal", rows_loaded as "rowsLoaded", rows_quarantined as "rowsQuarantined",
                header_meta as "headerMeta", error, uploaded_by as "uploadedBy", received_at as "receivedAt"
-        from ingest.ingestion_files order by received_at desc limit 50
-        """);
+        from ingest.ingestion_files{companyWhere} order by received_at desc limit 50
+        """, new { companies = scope.CompanyIds });
     return Results.Ok(rows);
 }).RequireAuthorization();
 
@@ -302,9 +320,15 @@ api.MapPost("/ingestions/upload", async (HttpRequest http, HttpContext ctx) =>
         return Results.Problem(statusCode: 400, title: "VAL-001",
             detail: $"File is {Fmt.N(file.Length / 1024.0 / 1024.0, 1)} MB; the cap is {Fmt.N(MaxUploadBytes / 1024 / 1024)} MB.");
 
+    // Which company this upload belongs to (multi-tenant). Single-company users default to theirs;
+    // Super Admin / multi-company users must have picked one on the Ingestion page.
+    long? requested = long.TryParse(form["companyId"], out var cid) ? cid : null;
+    var (companyId, cerr) = Companies.ResolveUploadCompany(scope, requested);
+    if (cerr is not null) return cerr;
+
     using var ms = new MemoryStream();
     await file.CopyToAsync(ms);
-    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email, scope);
+    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email, scope, companyId);
     return Results.Ok(result);
 }).RequireAuthorization();
 

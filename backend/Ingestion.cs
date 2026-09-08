@@ -172,10 +172,14 @@ public static class Ingestion
     private static string First(string line) => line.Split('\t')[0].Trim();
 
     // ---------- loader: staging-free MVP upsert, idempotent per file hash (FR-I6) ----------
-    public static async Task<object> Load(NpgsqlDataSource ds, string fileName, byte[] bytes, string source, string? uploadedBy, UserScope? scope = null)
+    public static async Task<object> Load(NpgsqlDataSource ds, string fileName, byte[] bytes, string source, string? uploadedBy, UserScope? scope = null, long? companyId = null)
     {
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         await using var con = await ds.OpenConnectionAsync();
+
+        // Which company this upload belongs to (multi-tenant). The endpoint validates it against
+        // the uploader's scope; sample auto-ingest passes none, so fall back to the first company.
+        long companyForRows = companyId ?? await con.ExecuteScalarAsync<long>("select min(id) from master.companies");
 
         var dup = await con.ExecuteScalarAsync<long?>(
             "select id from ingest.ingestion_files where file_hash = @hash", new { hash });
@@ -222,9 +226,9 @@ public static class Ingestion
         catch (Exception ex)
         {
             await con.ExecuteAsync("""
-                insert into ingest.ingestion_files (file_name, file_hash, file_size, source, template, status, error, uploaded_by)
-                values (@fileName, @hash, @size, @source, @template, 'failed', @err, @uploadedBy)
-                """, new { fileName, hash, size = (long)bytes.Length, source, template, err = ex.Message, uploadedBy });
+                insert into ingest.ingestion_files (file_name, file_hash, file_size, source, template, status, error, uploaded_by, company_id)
+                values (@fileName, @hash, @size, @source, @template, 'failed', @err, @uploadedBy, @companyForRows)
+                """, new { fileName, hash, size = (long)bytes.Length, source, template, err = ex.Message, uploadedBy, companyForRows });
             await Notifications.Emit(con, "error", $"Ingestion failed — {fileName}", ex.Message);
             Audit.Log("ingest.failed", null, "file", fileName, $"Parse failed: {ex.Message}",
                 new { source, template, hash }, actorEmailOverride: uploadedBy);
@@ -238,8 +242,8 @@ public static class Ingestion
 
         var fileId = await con.ExecuteScalarAsync<long>("""
             insert into ingest.ingestion_files
-                (file_name, file_hash, file_size, source, template, status, rows_total, rows_loaded, rows_quarantined, header_meta, footer_totals, uploaded_by)
-            values (@fileName, @hash, @size, @source, @template, @status, @total, @loaded, @quarantined, @meta::jsonb, @footer::jsonb, @uploadedBy)
+                (file_name, file_hash, file_size, source, template, status, rows_total, rows_loaded, rows_quarantined, header_meta, footer_totals, uploaded_by, company_id)
+            values (@fileName, @hash, @size, @source, @template, @status, @total, @loaded, @quarantined, @meta::jsonb, @footer::jsonb, @uploadedBy, @companyForRows)
             returning id
             """, new
         {
@@ -248,7 +252,7 @@ public static class Ingestion
             total = parsed.Lines.Count, loaded = good.Count, quarantined = bad.Count,
             meta = JsonSerializer.Serialize(parsed.HeaderMeta),
             footer = JsonSerializer.Serialize(parsed.FooterTotals),
-            uploadedBy
+            uploadedBy, companyForRows
         }, tx);
 
         // Tag rows with the UPLOADER's entity so a scope-locked user sees their own upload
@@ -326,13 +330,13 @@ public static class Ingestion
             if (!docCache.TryGetValue(docKey, out var docId))
             {
                 docId = await con.ExecuteScalarAsync<long>("""
-                    insert into bc.documents (template, doc_type, aju_number, doc_number, doc_date, entity_id, site_id, tpb_id, supplier_name, ingestion_file_id)
-                    values (@template, @docType, @aju, @docNo, @docDate::date, @entityId, @siteId, @tpbId, @supplier, @fileId)
+                    insert into bc.documents (template, doc_type, aju_number, doc_number, doc_date, entity_id, site_id, tpb_id, supplier_name, ingestion_file_id, company_id)
+                    values (@template, @docType, @aju, @docNo, @docDate::date, @entityId, @siteId, @tpbId, @supplier, @fileId, @companyForRows)
                     on conflict (template, aju_number, doc_number) do update set doc_type = excluded.doc_type
                     returning id
                     """, new
                 {
-                    template, docType, aju, docNo, docDate = docDateIso, entityId, siteId, tpbId,
+                    template, docType, aju, docNo, docDate = docDateIso, entityId, siteId, tpbId, companyForRows,
                     supplier = template switch
                     {
                         "BC23" => StrOrNull(line, "Supplier Name"),
@@ -347,10 +351,10 @@ public static class Ingestion
             }
 
             var cmd = new NpgsqlCommand("""
-                insert into bc.document_lines (document_id, template, doc_type, doc_date, entity_id, site_id, tpb_id, line_no, data, ingestion_file_id)
+                insert into bc.document_lines (document_id, template, doc_type, doc_date, entity_id, site_id, tpb_id, line_no, data, ingestion_file_id, company_id)
                 values (@doc, @template, @docType, @docDate::date, @entityId, @siteId, @tpbId,
                         coalesce((select max(line_no) from bc.document_lines where document_id = @doc), 0) + 1,
-                        @data, @fileId)
+                        @data, @fileId, @companyForRows)
                 """, con, tx);
             cmd.Parameters.AddWithValue("doc", docId);
             cmd.Parameters.AddWithValue("template", template);
@@ -361,6 +365,7 @@ public static class Ingestion
             cmd.Parameters.AddWithValue("tpbId", (object?)tpbId ?? DBNull.Value);
             cmd.Parameters.Add(new NpgsqlParameter("data", NpgsqlDbType.Jsonb) { Value = JsonSerializer.Serialize(line.Data) });
             cmd.Parameters.AddWithValue("fileId", fileId);
+            cmd.Parameters.AddWithValue("companyForRows", companyForRows);
             await cmd.ExecuteNonQueryAsync();
             lineNoFallback++;
         }
