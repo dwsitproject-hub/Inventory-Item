@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Net;
+using System.Net.Sockets;
 using Dapper;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -22,7 +24,32 @@ public record SsoCallbackRequest(string Code, string CodeVerifier, string? Nonce
 public static class Sso
 {
     private static IConfiguration _cfg = default!;
-    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private static readonly HttpClient _http = CreateHttpClient();
+
+    // The DWS Hub hostname can resolve to an IPv6 (AAAA) address that has no route from inside the
+    // container. .NET prefers IPv6 and hangs on it until the request times out (seen as SSO-002 /
+    // "Could not reach the identity provider" while a plain wget to the same name succeeds over
+    // IPv4). Force every Hub call to connect over IPv4 — the HttpClient analogue of pinning
+    // DB_HOST to the private IPv4 for the database.
+    private static HttpClient CreateHttpClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            ConnectCallback = async (context, ct) =>
+            {
+                var addrs = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, AddressFamily.InterNetwork, ct);
+                if (addrs.Length == 0) throw new SocketException((int)SocketError.HostNotFound);
+                var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                try
+                {
+                    await socket.ConnectAsync(addrs, context.DnsEndPoint.Port, ct);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch { socket.Dispose(); throw; }
+            }
+        };
+        return new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+    }
 
     public static bool Enabled => string.Equals(_cfg["Sso:Enabled"], "true", StringComparison.OrdinalIgnoreCase)
                                   && !string.IsNullOrWhiteSpace(_cfg["Sso:Issuer"])
