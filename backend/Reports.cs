@@ -104,12 +104,19 @@ public static class Reports
         return (new BuiltQuery(report, where.ToString(), p, order, columns), null);
     }
 
-    public static string Expr(Field fld) => fld.Type switch
+    public static string Expr(Field fld)
     {
-        FieldType.Number => $"nullif(l.data->>'{Sql(fld.Name)}','')::numeric",
-        FieldType.Date => $"nullif(l.data->>'{Sql(fld.Name)}','')::date",
-        _ => $"l.data->>'{Sql(fld.Name)}'"
-    };
+        var col = $"l.data->>'{Sql(fld.Name)}'";
+        // Guard the cast so ONE malformed cell can't 500 the whole report. A "Number"/"Date" column
+        // that holds a value which will not cast (e.g. a dash, text, or a stray symbol that slipped
+        // through ingestion) projects and sorts as NULL instead of throwing "invalid input syntax".
+        return fld.Type switch
+        {
+            FieldType.Number => $"(case when btrim({col}) ~ '^-?[0-9]+(\\.[0-9]+)?$' then btrim({col})::numeric end)",
+            FieldType.Date => $"(case when {col} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}' then ({col})::date end)",
+            _ => col
+        };
+    }
 
     public static async Task<IResult> Query(NpgsqlDataSource ds, string key, QueryRequest req, UserScope scope, string? ip = null)
     {
