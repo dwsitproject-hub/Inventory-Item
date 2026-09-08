@@ -429,9 +429,11 @@ for the same `server_name` and `nginx -t` fails). Instead make the file read as 
 server blocks:
 
 - **`listen 80`** → only `return 301 https://$host$request_uri;` (no `location`, no proxy).
-- **`listen 443 ssl`** → serves the site: the `location /` proxy, all the AR-05 headers **plus**
-  the now-uncommented `Strict-Transport-Security` header, and `ssl_certificate` /
-  `ssl_certificate_key` pointing at the installed cert and key.
+- **`listen 443 ssl http2;`** → serves the site: the `location /` proxy, all the AR-05 headers
+  **plus** the now-uncommented `Strict-Transport-Security` header, and `ssl_certificate` /
+  `ssl_certificate_key` pointing at the installed cert and key. Put `http2` **on the `listen` line**
+  — a separate `http2 on;` directive only exists in nginx ≥ 1.25.1 and fails on 1.24.x with
+  `unknown directive "http2"`.
 
 In both blocks set `server_name` to the production hostname, and in the 443 `location` set
 `proxy_pass http://127.0.0.1:8090;` (your `WEB_PORT` — the shipped file still says `8088`). Do
