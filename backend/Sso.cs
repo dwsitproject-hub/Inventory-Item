@@ -75,6 +75,22 @@ public static class Sso
     private static string RedirectUri => _cfg["Sso:RedirectUri"] ?? "";
     private static string Scope => _cfg["Sso:Scope"] ?? "openid profile email";
 
+    // Optional internal base for the backend's OWN calls to the Hub (discovery, token, JWKS). On a
+    // shared host the Hub API is reachable directly over plain HTTP (e.g. http://172.28.80.51:4001),
+    // which sidesteps the public HTTPS hop that .NET's TLS stack stalls on from inside the container
+    // (a 15s timeout while wget to the same URL succeeds). The browser still uses the public
+    // authorize endpoint, and the id_token is still validated against the public issuer — only the
+    // server-to-server fetch host changes. Leave unset to call the public issuer directly.
+    private static string InternalBase => (_cfg["Sso:InternalBase"] ?? "").TrimEnd('/');
+
+    /// <summary>Rewrite a public Hub URL to the internal base when one is configured.</summary>
+    private static string Reach(string publicUrl)
+    {
+        if (string.IsNullOrEmpty(InternalBase)) return publicUrl;
+        if (publicUrl.StartsWith(Issuer, StringComparison.Ordinal)) return InternalBase + publicUrl[Issuer.Length..];
+        return InternalBase + new Uri(publicUrl).PathAndQuery;
+    }
+
     public static void Configure(IConfiguration cfg) => _cfg = cfg;
 
     // ---- discovery + JWKS, cached ----
@@ -92,7 +108,8 @@ public static class Sso
         try
         {
             if (_disc is not null && DateTime.UtcNow - _discAt < TimeSpan.FromMinutes(15)) return _disc;
-            var json = await _http.GetStringAsync($"{Issuer}/api/sso/.well-known/openid-configuration");
+            var discoveryBase = string.IsNullOrEmpty(InternalBase) ? Issuer : InternalBase;
+            var json = await _http.GetStringAsync($"{discoveryBase}/api/sso/.well-known/openid-configuration");
             var d = JsonSerializer.Deserialize<Discovery>(json)
                     ?? throw new InvalidOperationException("Hub discovery document was empty.");
             // The discovery issuer is what we validate id_token 'iss' against; it must match the
@@ -109,7 +126,7 @@ public static class Sso
     {
         if (!force && _jwks is not null && DateTime.UtcNow - _jwksAt < TimeSpan.FromMinutes(10)) return _jwks;
         var d = await GetDiscoveryAsync();
-        var json = await _http.GetStringAsync(d.jwks_uri);
+        var json = await _http.GetStringAsync(Reach(d.jwks_uri));
         _jwks = new JsonWebKeySet(json); _jwksAt = DateTime.UtcNow;
         return _jwks;
     }
@@ -172,7 +189,7 @@ public static class Sso
                 client_id = ClientId,
                 code_verifier = req.CodeVerifier
             });
-            var resp = await _http.PostAsync(disc.token_endpoint,
+            var resp = await _http.PostAsync(Reach(disc.token_endpoint),
                 new StringContent(body, System.Text.Encoding.UTF8, "application/json"));
             var text = await resp.Content.ReadAsStringAsync();
             if (!resp.IsSuccessStatusCode)

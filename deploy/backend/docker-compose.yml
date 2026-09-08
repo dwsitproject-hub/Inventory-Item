@@ -24,6 +24,9 @@ services:
       Sso__ClientId: ${SSO_CLIENT_ID:-}
       Sso__RedirectUri: ${SSO_REDIRECT_URI:-}
       Sso__Scope: ${SSO_SCOPE:-openid profile email}
+      # Optional: where the backend reaches the Hub's own endpoints (discovery/token/JWKS). Set to
+      # the Hub API's internal HTTP address to avoid the public HTTPS hop the container can't do.
+      Sso__InternalBase: ${SSO_INTERNAL_BASE:-}
       # First-run only: initial passwords for the two seeded accounts.
       Seed__AdminPassword: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD in .env}
       Seed__SitePassword: ${SEED_SITE_PASSWORD:?set SEED_SITE_PASSWORD in .env}
