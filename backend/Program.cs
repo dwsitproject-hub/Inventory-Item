@@ -304,7 +304,7 @@ api.MapPost("/ingestions/upload", async (HttpRequest http, HttpContext ctx) =>
 
     using var ms = new MemoryStream();
     await file.CopyToAsync(ms);
-    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email);
+    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email, scope);
     return Results.Ok(result);
 }).RequireAuthorization();
 

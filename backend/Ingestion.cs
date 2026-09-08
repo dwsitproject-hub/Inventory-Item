@@ -172,7 +172,7 @@ public static class Ingestion
     private static string First(string line) => line.Split('\t')[0].Trim();
 
     // ---------- loader: staging-free MVP upsert, idempotent per file hash (FR-I6) ----------
-    public static async Task<object> Load(NpgsqlDataSource ds, string fileName, byte[] bytes, string source, string? uploadedBy)
+    public static async Task<object> Load(NpgsqlDataSource ds, string fileName, byte[] bytes, string source, string? uploadedBy, UserScope? scope = null)
     {
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         await using var con = await ds.OpenConnectionAsync();
@@ -251,8 +251,15 @@ public static class Ingestion
             uploadedBy
         }, tx);
 
-        // resolve scope (MVP: single seeded entity; site/TPB resolved from BC40 rows)
-        var entityId = await con.ExecuteScalarAsync<long>("select id from master.entities order by id limit 1", transaction: tx);
+        // Tag rows with the UPLOADER's entity so a scope-locked user sees their own upload
+        // (FR-R2a; Reports filters l.entity_id = the viewer's entity). A scope-locked uploader owns
+        // the data for their assigned entity; an all-entities uploader (admin/Super Admin) or the
+        // sample auto-ingest has no single entity, so fall back to the first seeded entity. Before
+        // this, every upload was hard-coded to the first entity, so a user assigned to any other
+        // entity saw zero rows from their own upload. Site/TPB are still resolved from the rows.
+        long entityId = scope is { AllEntities: false, EntityId: long uploaderEntity }
+            ? uploaderEntity
+            : await con.ExecuteScalarAsync<long>("select id from master.entities order by id limit 1", transaction: tx);
         var siteCache = new Dictionary<string, long>();
         var tpbCache = new Dictionary<string, long>();
         var docCache = new Dictionary<string, long>();
