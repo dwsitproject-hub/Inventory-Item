@@ -36,8 +36,8 @@ export default function Login() {
   return (
     <div className="loginwrap">
       <form className="logincard" onSubmit={submit}>
+        {/* No company logo on the login page — the logo is per-company and only known after sign-in. */}
         <div className="brand" style={{ background: 'transparent', border: 'none', padding: 0 }}>
-          <div className="logo">PT SPC</div>
           <div style={{ color: 'var(--navy)' }}><b>BC Inventory</b><span style={{ color: 'var(--muted)' }}>Reporting System</span></div>
         </div>
         <h1>Sign in</h1>

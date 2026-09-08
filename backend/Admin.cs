@@ -30,7 +30,7 @@ public static class Admin
                    e.name as "entityName", s.name as "siteName", u.created_at as "createdAt",
                    coalesce((select array_agg(uc.company_id order by c.name)
                              from auth.user_companies uc join master.companies c on c.id = uc.company_id
-                             where uc.user_id = u.id), '{}') as "companyIds",
+                             where uc.user_id = u.id), '{}'::bigint[]) as "companyIds",
                    coalesce((select string_agg(c.name, ', ' order by c.name)
                              from auth.user_companies uc join master.companies c on c.id = uc.company_id
                              where uc.user_id = u.id), '') as "companyNames"

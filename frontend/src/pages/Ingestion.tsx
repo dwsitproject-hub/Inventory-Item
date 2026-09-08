@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ReportMeta, can, downloadTemplate, getUser, ingestions, quarantine, reportCatalog, uploadFile } from '../api'
+import { PickCompany, ReportMeta, can, downloadTemplate, getUser, ingestions, pickableCompanies, quarantine, reportCatalog, uploadFile } from '../api'
 import { fmtDateTime, fmtInt } from '../format'
 
 type FileRow = {
@@ -22,17 +22,24 @@ export default function Ingestion() {
   const [qRows, setQRows] = useState<any[]>([])
   const [catalog, setCatalog] = useState<ReportMeta[]>([])
   const [openTpl, setOpenTpl] = useState<string | null>(null)
+  const [pickCos, setPickCos] = useState<PickCompany[]>([])
+  const [companyId, setCompanyId] = useState<number | ''>('')
   const fileInput = useRef<HTMLInputElement>(null)
 
   const refresh = () => ingestions().then(setFiles).catch(e => setError(e.message))
-  useEffect(() => { refresh(); reportCatalog().then(setCatalog).catch(() => { /* non-fatal */ }) }, [])
+  useEffect(() => {
+    refresh()
+    reportCatalog().then(setCatalog).catch(() => { /* non-fatal */ })
+    if (canUpload) pickableCompanies().then(cs => { setPickCos(cs); if (cs.length === 1) setCompanyId(cs[0].id) }).catch(() => { /* non-fatal */ })
+  }, [])
 
   async function doUpload() {
     const f = fileInput.current?.files?.[0]
     if (!f) return
+    if (companyId === '') { setError('Select the company this data belongs to.'); return }
     setBusy(true); setResult(null); setError('')
     try {
-      const res = await uploadFile(f)
+      const res = await uploadFile(f, companyId)
       setResult(res)
       refresh()
     } catch (e: any) {
@@ -99,6 +106,15 @@ export default function Ingestion() {
           {!canUpload && <div className="note">Your role ({user.role}) cannot upload files. An administrator can grant this under Administration → Role Management (Ingestion → Insert).</div>}
           {canUpload && (
             <>
+              <div className="fld">
+                <label>Company this data belongs to</label>
+                {pickCos.length === 1
+                  ? <input value={pickCos[0].name} disabled />
+                  : <select value={companyId} onChange={e => setCompanyId(e.target.value === '' ? '' : Number(e.target.value))}>
+                      <option value="">— select a company —</option>
+                      {pickCos.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>}
+              </div>
               <div className="fld">
                 <label>File (template auto-detected by content, never by extension — FR-I8)</label>
                 <input type="file" ref={fileInput} />

@@ -1,29 +1,124 @@
 import { Fragment, useEffect, useState } from 'react'
 import {
-  AdminUser, NotifMatrix, NotifSaveRow, RoleMatrix, RolePermRow, adminAddEntity, adminAddPermit,
+  AdminUser, Company, NotifMatrix, NotifSaveRow, RoleMatrix, RolePermRow, adminAddEntity, adminAddPermit,
   adminAddSite, adminCreateUser, adminMaster, adminResetPassword, adminSetStatus, adminUsers, can,
-  me, notificationSubscriptions, rolePermissions, saveNotificationSubscriptions,
-  saveRolePermissions, setPermissions
+  companies as listCompanies, createCompany, getUser, me, notificationSubscriptions, rolePermissions,
+  saveNotificationSubscriptions, saveRolePermissions, setPermissions, setUserCompanies, updateCompany
 } from '../api'
 import { fmtInt } from '../format'
 
 export default function Admin() {
-  const [tab, setTab] = useState<'users' | 'roles' | 'notifications' | 'master'>('users')
+  const [tab, setTab] = useState<'users' | 'companies' | 'roles' | 'notifications' | 'master'>('users')
+  const isSuper = getUser()?.role === 'Super Admin'
   return (
     <>
       <h1 className="page">Administration</h1>
-      <div className="crumb">Users, roles &amp; access scope · page permissions · notification routing · master data governance</div>
+      <div className="crumb">Companies · users, roles &amp; access scope · page permissions · notification routing · master data governance</div>
       <div className="chips" style={{ marginBottom: 14 }}>
         <span className={'chk' + (tab === 'users' ? ' on' : '')} onClick={() => setTab('users')}>User Management</span>
+        {isSuper && <span className={'chk' + (tab === 'companies' ? ' on' : '')} onClick={() => setTab('companies')}>Companies</span>}
         <span className={'chk' + (tab === 'roles' ? ' on' : '')} onClick={() => setTab('roles')}>Role Management</span>
         <span className={'chk' + (tab === 'notifications' ? ' on' : '')} onClick={() => setTab('notifications')}>Notifications</span>
         <span className={'chk' + (tab === 'master' ? ' on' : '')} onClick={() => setTab('master')}>Master Data</span>
       </div>
       {tab === 'users' ? <Users />
+        : tab === 'companies' ? <CompaniesTab />
         : tab === 'roles' ? <RoleManagement />
         : tab === 'notifications' ? <NotificationRouting />
         : <Master />}
     </>
+  )
+}
+
+/** Read a File as a base64 payload (data-URI). The backend accepts the whole data-URI. */
+function fileToBase64(file: File): Promise<{ base64: string; type: string }> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve({ base64: String(r.result), type: file.type })
+    r.onerror = reject
+    r.readAsDataURL(file)
+  })
+}
+
+function CompaniesTab() {
+  const [rows, setRows] = useState<Company[]>([])
+  const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [form, setForm] = useState<{ id: number | null; name: string; active: boolean; logo: string | null; logoType: string | null }>(
+    { id: null, name: '', active: true, logo: null, logoType: null })
+  const [busy, setBusy] = useState(false)
+
+  const refresh = () => listCompanies().then(setRows).catch(e => setError(e.message))
+  useEffect(() => { refresh() }, [])
+
+  const edit = (c: Company) => { setForm({ id: c.id, name: c.name, active: c.active, logo: null, logoType: null }); setInfo(''); setError('') }
+  const reset = () => setForm({ id: null, name: '', active: true, logo: null, logoType: null })
+
+  async function pickLogo(f: File | undefined) {
+    if (!f) { setForm(s => ({ ...s, logo: null, logoType: null })); return }
+    if (f.size > 512 * 1024) { setError('Logo must be 512 KB or smaller.'); return }
+    const { base64, type } = await fileToBase64(f)
+    setForm(s => ({ ...s, logo: base64, logoType: type }))
+  }
+
+  async function save() {
+    setBusy(true); setError(''); setInfo('')
+    try {
+      const body = { name: form.name, active: form.active, logoBase64: form.logo, logoContentType: form.logoType }
+      if (form.id) { await updateCompany(form.id, body); setInfo(`Company ${form.name} updated.`) }
+      else { await createCompany(body); setInfo(`Company ${form.name} registered.`) }
+      reset(); refresh()
+    } catch (e: any) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="row2" style={{ gridTemplateColumns: '1.3fr 1fr' }}>
+      <div className="panel">
+        <h3>Companies (PT)</h3>
+        {error && <div className="err" style={{ marginBottom: 10 }}>{error}</div>}
+        {info && <div className="note" style={{ marginBottom: 10 }}>{info}</div>}
+        <div className="gridscroll" style={{ maxHeight: '52vh' }}>
+          <table className="grid">
+            <thead><tr><th>Company</th><th>Logo</th><th>Users</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {rows.map(c => (
+                <tr key={c.id}>
+                  <td><b>{c.name}</b></td>
+                  <td>{c.hasLogo ? <span className="badge b-ok">logo set</span> : <span className="badge b-warn">no logo</span>}</td>
+                  <td className="num">{fmtInt(c.userCount)}</td>
+                  <td><span className={'badge ' + (c.active ? 'b-ok' : 'b-err')}>{c.active ? 'active' : 'inactive'}</span></td>
+                  <td><button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => edit(c)}>Edit</button></td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={5} className="loading">no companies yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h3>{form.id ? 'Edit company' : 'Register a new company (PT)'}</h3>
+        <div className="fld"><label>Company name</label>
+          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. PT Priscolin" />
+        </div>
+        <div className="fld"><label>Logo (PNG, JPEG, SVG or WebP · ≤512 KB · shown in the header for this company's users)</label>
+          <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" onChange={e => pickLogo(e.target.files?.[0])} />
+          {form.logo && <div style={{ marginTop: 8 }}><img src={form.logo} alt="preview" style={{ maxHeight: 48, maxWidth: 180 }} /></div>}
+          {form.id && !form.logo && <div className="note" style={{ marginTop: 6 }}>Leave empty to keep the current logo.</div>}
+        </div>
+        <div className="fld"><label>Status</label>
+          <select value={form.active ? 'active' : 'inactive'} onChange={e => setForm({ ...form, active: e.target.value === 'active' })}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive (hidden from upload / assignment)</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn p" onClick={save} disabled={busy || !form.name.trim()}>{busy ? 'Saving…' : form.id ? 'Save changes' : 'Register company'}</button>
+          {form.id && <button className="btn o" onClick={reset} disabled={busy}>New</button>}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -315,13 +410,24 @@ function RoleManagement() {
 function Users() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [roles, setRoles] = useState<string[]>([])
+  const [cos, setCos] = useState<Company[]>([])
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
-  const [form, setForm] = useState({ email: '', fullName: '', role: 'Site BC User', allEntities: false, entityId: '1', password: '' })
+  const [form, setForm] = useState({ email: '', fullName: '', role: 'Site BC User', allEntities: false, entityId: '1', password: '', companyIds: [] as number[] })
   const [showForm, setShowForm] = useState(false)
+  const [editCosFor, setEditCosFor] = useState<number | null>(null)
+  const [editCos, setEditCos] = useState<number[]>([])
 
-  const refresh = () => adminUsers().then(d => { setUsers(d.users); setRoles(d.roles) }).catch(e => setError(e.message))
+  const refresh = () => {
+    adminUsers().then(d => { setUsers(d.users); setRoles(d.roles) }).catch(e => setError(e.message))
+    listCompanies().then(setCos).catch(() => { /* non-fatal */ })
+  }
   useEffect(() => { refresh() }, [])
+
+  const activeCos = cos.filter(c => c.active)
+  const isSuperForm = form.role === 'Super Admin'
+  const toggleFormCompany = (id: number) =>
+    setForm(f => ({ ...f, companyIds: f.companyIds.includes(id) ? f.companyIds.filter(x => x !== id) : [...f.companyIds, id] }))
 
   async function create() {
     setError(''); setInfo('')
@@ -330,14 +436,27 @@ function Users() {
         email: form.email, fullName: form.fullName, role: form.role,
         allEntities: form.allEntities,
         entityId: form.allEntities ? null : Number(form.entityId), siteId: null,
-        password: form.password
+        password: form.password,
+        companyIds: isSuperForm ? [] : form.companyIds
       })
       setInfo(`User ${form.email} created.`)
       setShowForm(false)
-      setForm({ ...form, email: '', fullName: '', password: '' })
+      setForm({ ...form, email: '', fullName: '', password: '', companyIds: [] })
       refresh()
     } catch (e: any) { setError(e.message) }
   }
+
+  function openCompanyEdit(u: AdminUser) {
+    if (editCosFor === u.id) { setEditCosFor(null); return }
+    setEditCosFor(u.id); setEditCos(u.companyIds ?? []); setError(''); setInfo('')
+  }
+  async function saveCompanyEdit(id: number) {
+    setError('')
+    try { await setUserCompanies(id, editCos); setInfo('Company assignment updated.'); setEditCosFor(null); refresh() }
+    catch (e: any) { setError(e.message) }
+  }
+  const toggleEditCompany = (cid: number) =>
+    setEditCos(cs => cs.includes(cid) ? cs.filter(x => x !== cid) : [...cs, cid])
 
   async function toggleStatus(u: AdminUser) {
     setError('')
@@ -377,28 +496,62 @@ function Users() {
             </select>
           </div>
           <div className="f"><label>Initial password</label><input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
+          {isSuperForm
+            ? <div className="f" style={{ flexBasis: '100%' }}><label>Companies</label><span className="note">A Super Admin spans all companies automatically.</span></div>
+            : <div className="f" style={{ flexBasis: '100%' }}><label>Companies (assign at least one)</label>
+                <div className="cosel">
+                  {activeCos.map(c => (
+                    <label key={c.id} className="cochk">
+                      <input type="checkbox" checked={form.companyIds.includes(c.id)} onChange={() => toggleFormCompany(c.id)} /> {c.name}
+                    </label>
+                  ))}
+                  {activeCos.length === 0 && <span className="note">No active companies — register one in the Companies tab first.</span>}
+                </div>
+              </div>}
           <button className="btn p" onClick={create}>Create</button>
         </div>
       )}
       <div className="gridscroll">
         <table className="grid">
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Scope</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Scope</th><th>Companies</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {users.map(u => (
-              <tr key={u.id}>
+            {users.map(u => {
+              const superU = u.role === 'Super Admin'
+              return (
+              <Fragment key={u.id}>
+              <tr>
                 <td>{u.fullName}</td>
                 <td>{u.email}</td>
                 <td>{u.role}</td>
                 <td>{u.allEntities ? 'All entities' : `${u.entityName ?? 'entity #' + u.entityId}${u.siteName ? ' · ' + u.siteName : ''}`}</td>
+                <td style={{ whiteSpace: 'normal' }}>{superU ? <span style={{ color: 'var(--muted)' }}>All companies</span> : (u.companyNames || <span className="badge b-warn">none</span>)}</td>
                 <td><span className={'badge ' + (u.status === 'active' ? 'b-ok' : 'b-err')}>{u.status}</span></td>
-                <td>
+                <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => toggleStatus(u)}>
                     {u.status === 'active' ? 'Disable' : 'Enable'}
                   </button>
-                  <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => reset(u)}>Reset</button>
+                  <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => reset(u)}>Reset</button>
+                  {!superU && <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => openCompanyEdit(u)}>
+                    {editCosFor === u.id ? 'Close' : 'Companies'}
+                  </button>}
                 </td>
               </tr>
-            ))}
+              {editCosFor === u.id && (
+                <tr>
+                  <td colSpan={7} style={{ background: '#f6f8fa', whiteSpace: 'normal' }}>
+                    <div className="cosel" style={{ marginBottom: 8 }}>
+                      {activeCos.map(c => (
+                        <label key={c.id} className="cochk">
+                          <input type="checkbox" checked={editCos.includes(c.id)} onChange={() => toggleEditCompany(c.id)} /> {c.name}
+                        </label>
+                      ))}
+                    </div>
+                    <button className="btn p" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => saveCompanyEdit(u.id)}>Save assignment</button>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+            )})}
           </tbody>
         </table>
       </div>

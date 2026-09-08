@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { can, clearSession, getToken, getUser, hasPermissions, landingPath, me, setPermissions } from './api'
+import { can, clearSession, getCompany, getToken, getUser, hasPermissions, landingPath, me, setCompany, setPermissions } from './api'
 import Bell from './components/Bell'
 import Login from './pages/Login'
 import SsoCallback from './pages/SsoCallback'
@@ -20,7 +20,9 @@ function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app">
       <div className="brand">
-        <div className="logo">PT SPC</div>
+        {/* Per-company logo: shown only when the user belongs to exactly one company that has a
+            logo (getCompany() is null for Super Admin / multi-company users, so no logo then). */}
+        {getCompany()?.logo && <img className="brandlogo" src={getCompany()!.logo!} alt={getCompany()!.name ?? ''} />}
         <div><b>BC Inventory</b><span>Reporting System</span></div>
       </div>
       <div className="top">
@@ -90,7 +92,7 @@ export default function App() {
   useEffect(() => {
     if (ready) return
     me()
-      .then(p => setPermissions(p.permissions ?? {}))
+      .then(p => { setPermissions(p.permissions ?? {}); setCompany(p.company) })
       .catch(() => { /* 401 already redirects to login; the API stays the real gate */ })
       .finally(() => setReady(true))
   }, [ready])

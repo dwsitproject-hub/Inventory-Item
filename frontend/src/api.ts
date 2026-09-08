@@ -77,6 +77,19 @@ export function clearSession() {
   sessionStorage.removeItem('bc.token')
   sessionStorage.removeItem('bc.user')
   sessionStorage.removeItem('bc.perms')
+  sessionStorage.removeItem('bc.company')
+}
+
+// ---- multi-tenant company ----
+/** Header company shown after login: present only when the user belongs to exactly one company. */
+export type MeCompany = { id: number | null; name: string | null; logo: string | null }
+export function getCompany(): MeCompany | null {
+  const raw = sessionStorage.getItem('bc.company')
+  return raw ? JSON.parse(raw) as MeCompany : null
+}
+export function setCompany(c: MeCompany | null | undefined) {
+  if (c && c.id != null) sessionStorage.setItem('bc.company', JSON.stringify(c))
+  else sessionStorage.removeItem('bc.company')
 }
 
 async function request(path: string, opts: RequestInit = {}): Promise<any> {
@@ -111,6 +124,7 @@ export async function login(email: string, password: string): Promise<void> {
   // effective page permissions drive nav and action gating (the API enforces them too)
   const profile = await me()
   setPermissions(profile.permissions ?? {})
+  setCompany(profile.company)
 }
 
 // ---- SSO (DWS Hub, OIDC + PKCE) ----
@@ -179,6 +193,7 @@ export async function ssoComplete(code: string, state: string | null, verifierFr
   sessionStorage.setItem('bc.user', JSON.stringify(data.user))
   const profile = await me()
   setPermissions(profile.permissions ?? {})
+  setCompany(profile.company)
 }
 
 // ---- role management ----
@@ -221,11 +236,24 @@ export function queryReport(key: string, body: {
   return request(`/reports/${key}/query`, { method: 'POST', body: JSON.stringify(body) })
 }
 
-export async function uploadFile(file: File): Promise<any> {
+export async function uploadFile(file: File, companyId?: number | null): Promise<any> {
   const fd = new FormData()
   fd.append('file', file)
+  if (companyId != null) fd.append('companyId', String(companyId))
   return request('/ingestions/upload', { method: 'POST', body: fd })
 }
+
+// ---- companies (multi-tenant admin) ----
+export type Company = { id: number; name: string; active: boolean; hasLogo: boolean; userCount: number }
+export type PickCompany = { id: number; name: string }
+export const companies = (): Promise<Company[]> => request('/companies')
+export const createCompany = (body: { name: string; active: boolean; logoBase64?: string | null; logoContentType?: string | null }) =>
+  request('/companies', { method: 'POST', body: JSON.stringify(body) })
+export const updateCompany = (id: number, body: { name: string; active: boolean; logoBase64?: string | null; logoContentType?: string | null }) =>
+  request(`/companies/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const setUserCompanies = (userId: number, companyIds: number[]) =>
+  request(`/admin/users/${userId}/companies`, { method: 'PUT', body: JSON.stringify({ companyIds }) })
+export const pickableCompanies = (): Promise<PickCompany[]> => request('/companies/pickable')
 
 // ---- saved views (FR-R12) ----
 export type SavedView = { id: number; name: string | null; columns: string[]; sorts: SortSpec[]; pageSize: number }
@@ -267,11 +295,12 @@ export type AdminUser = {
   id: number; email: string; fullName: string; role: string; status: string
   allEntities: boolean; entityId: number | null; siteId: number | null
   entityName?: string; siteName?: string; createdAt: string
+  companyIds: number[]; companyNames: string
 }
 export const adminUsers = (): Promise<{ users: AdminUser[]; roles: string[] }> => request('/admin/users')
 export const adminCreateUser = (u: {
   email: string; fullName: string; role: string; allEntities: boolean
-  entityId: number | null; siteId: number | null; password: string
+  entityId: number | null; siteId: number | null; password: string; companyIds: number[]
 }) => request('/admin/users', { method: 'POST', body: JSON.stringify(u) })
 export const adminSetStatus = (id: number, status: 'active' | 'disabled') =>
   request(`/admin/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })

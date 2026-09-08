@@ -119,3 +119,8 @@ table.grid tr.rowsel:hover td{background:#fbe3e1}
 .ssodiv{display:flex;align-items:center;text-align:center;color:var(--muted);font-size:11px;margin:12px 0}
 .ssodiv::before,.ssodiv::after{content:"";flex:1;border-bottom:1px solid var(--line)}
 .ssodiv span{padding:0 10px;text-transform:uppercase;letter-spacing:.4px}
+
+/* Per-company logo in the sidebar brand, and company-assignment checkboxes (Admin) */
+.brandlogo{max-height:34px;max-width:130px;object-fit:contain;display:block;margin-bottom:4px}
+.cosel{display:flex;flex-wrap:wrap;gap:8px 16px}
+.cochk{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;white-space:nowrap}
