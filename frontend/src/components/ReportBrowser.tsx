@@ -14,9 +14,9 @@ export default function ReportBrowser({ page, title, crumb, dateLabels, searchHi
   searchHint?: string
 }) {
   const user = getUser()!
-  // Scope-locked roles have a fixed entity, so the Entity filter is just noise for them on the
-  // Reports page — hide it for these roles there (Inventory Movement keeps it).
-  const hideEntityFilter = page === 'reports' && ['Site BC User', 'Auditor', 'Data Steward'].includes(user.role)
+  // Scope-locked roles have a fixed entity, so the Entity filter is just noise for them — hide it
+  // for these roles on both Reports and Inventory Movement.
+  const hideEntityFilter = ['Site BC User', 'Auditor', 'Data Steward'].includes(user.role)
   const [catalog, setCatalog] = useState<ReportMeta[]>([])
   const [key, setKey] = useState<string>('')
   const [dateFrom, setDateFrom] = useState('')
