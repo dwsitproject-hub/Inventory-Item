@@ -14,6 +14,9 @@ export default function ReportBrowser({ page, title, crumb, dateLabels, searchHi
   searchHint?: string
 }) {
   const user = getUser()!
+  // Scope-locked roles have a fixed entity, so the Entity filter is just noise for them on the
+  // Reports page — hide it for these roles there (Inventory Movement keeps it).
+  const hideEntityFilter = page === 'reports' && ['Site BC User', 'Auditor', 'Data Steward'].includes(user.role)
   const [catalog, setCatalog] = useState<ReportMeta[]>([])
   const [key, setKey] = useState<string>('')
   const [dateFrom, setDateFrom] = useState('')
@@ -61,12 +64,14 @@ export default function ReportBrowser({ page, title, crumb, dateLabels, searchHi
             {catalog.map(r => <option key={r.key} value={r.key}>{r.title}</option>)}
           </select>
         </div>
-        <div className="f">
-          <label>Entity {user.allEntities ? '' : '🔒'}</label>
-          <select disabled={!user.allEntities}>
-            <option>{user.allEntities ? 'All (my scope)' : 'PT Energi Unggul Persada'}</option>
-          </select>
-        </div>
+        {!hideEntityFilter && (
+          <div className="f">
+            <label>Entity {user.allEntities ? '' : '🔒'}</label>
+            <select disabled={!user.allEntities}>
+              <option>{user.allEntities ? 'All (my scope)' : 'PT Energi Unggul Persada'}</option>
+            </select>
+          </div>
+        )}
         <div className="f"><label>{fromLabel}</label><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} /></div>
         <div className="f"><label>{toLabel}</label><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} /></div>
         <div className="f" style={{ flex: 1 }}>
