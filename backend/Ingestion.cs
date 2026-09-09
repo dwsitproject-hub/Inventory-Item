@@ -263,7 +263,11 @@ public static class Ingestion
         // entity saw zero rows from their own upload. Site/TPB are still resolved from the rows.
         long entityId = scope is { AllEntities: false, EntityId: long uploaderEntity }
             ? uploaderEntity
-            : await con.ExecuteScalarAsync<long>("select id from master.entities order by id limit 1", transaction: tx);
+            // All-entities / sample uploads: keep the entity inside the upload's company (Company
+            // owns Entity), falling back to the first entity overall if the company has none yet.
+            : await con.ExecuteScalarAsync<long>(
+                "select coalesce((select min(id) from master.entities where company_id = @c), (select min(id) from master.entities))",
+                new { c = companyForRows }, tx);
         var siteCache = new Dictionary<string, long>();
         var tpbCache = new Dictionary<string, long>();
         var docCache = new Dictionary<string, long>();

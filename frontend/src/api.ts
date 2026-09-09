@@ -307,8 +307,8 @@ export const adminSetStatus = (id: number, status: 'active' | 'disabled') =>
 export const adminResetPassword = (id: number, password: string) =>
   request(`/admin/users/${id}/reset`, { method: 'POST', body: JSON.stringify({ password }) })
 export const adminMaster = () => request('/admin/master')
-export const adminAddEntity = (code: string, name: string) =>
-  request('/admin/entities', { method: 'POST', body: JSON.stringify({ code, name }) })
+export const adminAddEntity = (code: string, name: string, companyId: number) =>
+  request('/admin/entities', { method: 'POST', body: JSON.stringify({ code, name, companyId }) })
 export const adminAddSite = (entityId: number, name: string) =>
   request('/admin/sites', { method: 'POST', body: JSON.stringify({ entityId, name }) })
 export const adminAddPermit = (entityId: number, siteId: number | null, permitNo: string) =>

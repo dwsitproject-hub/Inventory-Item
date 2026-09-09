@@ -6,7 +6,7 @@ namespace BcInventory.Api;
 public record CreateUserRequest(string Email, string FullName, string Role, bool AllEntities, long? EntityId, long? SiteId, string Password, long[]? CompanyIds);
 public record ResetPasswordRequest(string Password);
 public record StatusRequest(string Status);
-public record EntityRequest(string Code, string Name);
+public record EntityRequest(string Code, string Name, long? CompanyId);
 public record SiteRequest(long EntityId, string Name);
 public record PermitRequest(long EntityId, long? SiteId, string PermitNo);
 
@@ -66,6 +66,12 @@ public static class Admin
             "select id from auth.users where lower(email) = lower(@e)", new { e = req.Email });
         if (dup != null)
             return Results.Problem(statusCode: 409, title: "MD-001", detail: "A user with this email already exists.");
+        // Company owns Entity: a scope-locked user's entity must belong to a company they are assigned to.
+        if (!req.AllEntities && req.EntityId is not null && req.CompanyIds is { Length: > 0 }
+            && !await con.ExecuteScalarAsync<bool>(
+                "select exists (select 1 from master.entities where id = @e and company_id = any(@cs))",
+                new { e = req.EntityId, cs = req.CompanyIds }))
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "The chosen entity is not in the assigned company.");
 
         var id = await con.ExecuteScalarAsync<long>("""
             insert into auth.users (email, full_name, role, password_hash, all_entities, entity_id, site_id)
@@ -130,7 +136,11 @@ public static class Admin
     {
         if (await RequireAdmin(scope) is { } err) return err;
         await using var con = await ds.OpenConnectionAsync();
-        var entities = await con.QueryAsync("""select id, code, name from master.entities order by name""");
+        var entities = await con.QueryAsync("""
+            select e.id, e.code, e.name, e.company_id as "companyId", c.name as "companyName"
+            from master.entities e left join master.companies c on c.id = e.company_id
+            order by c.name, e.name
+            """);
         var sites = await con.QueryAsync("""select s.id, s.entity_id as "entityId", s.name, e.name as "entityName" from master.sites s join master.entities e on e.id = s.entity_id order by e.name, s.name""");
         var permits = await con.QueryAsync("""
             select t.id, t.permit_no as "permitNo", t.entity_id as "entityId", e.name as "entityName",
@@ -152,13 +162,15 @@ public static class Admin
         if (await RequireAdmin(scope, "insert") is { } err) return err;
         if (string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.Name))
             return Results.Problem(statusCode: 400, title: "VAL-001", detail: "code and name required.");
+        if (req.CompanyId is null)
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "A company is required — an entity belongs to a company.");
         if (LooksLikeTestData(req.Name) || LooksLikeTestData(req.Code))
             return Results.Problem(statusCode: 409, title: "MD-001", detail: "Test entries are blocked in production master data (FR-A4).");
         await using var con = await ds.OpenConnectionAsync();
         try
         {
             var id = await con.ExecuteScalarAsync<long>(
-                "insert into master.entities (code, name) values (@Code, @Name) returning id", req);
+                "insert into master.entities (code, name, company_id) values (@Code, @Name, @CompanyId) returning id", req);
             Audit.Log("master.entity.create", scope, "entity", id.ToString(), $"Added entity {req.Code} — {req.Name}", req);
             return Results.Ok(new { id });
         }

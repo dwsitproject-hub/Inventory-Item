@@ -138,7 +138,7 @@ public static class Auth
     {
         var scope = Scope(principal);
         await using var con = await ds.OpenConnectionAsync();
-        var entities = (await con.QueryAsync("select id, code, name from master.entities order by name")).ToList();
+        var entities = (await con.QueryAsync("""select id, code, name, company_id as "companyId" from master.entities order by name""")).ToList();
         var sites = (await con.QueryAsync("""select id, entity_id as "entityId", name from master.sites order by name""")).ToList();
         var perms = await Permissions.Effective(scope.Role);
         // Header logo: only when the user belongs to exactly one company that has a logo; null for

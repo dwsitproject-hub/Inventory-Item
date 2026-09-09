@@ -281,6 +281,10 @@ public static class Db
             -- already used for, put every existing row and every non-Super-Admin user under it, so
             -- turning multi-tenancy on does not orphan any data or lock anyone out.
             insert into master.companies (name) values ('PT SPC') on conflict (name) do nothing;
+            -- Company owns Entity: each importer entity belongs to one company (the Scope sits
+            -- under the Company). Existing entities move under the first company.
+            alter table master.entities add column if not exists company_id bigint references master.companies(id);
+            update master.entities set company_id = (select min(id) from master.companies) where company_id is null;
             update ingest.ingestion_files set company_id = (select min(id) from master.companies) where company_id is null;
             update bc.documents            set company_id = (select min(id) from master.companies) where company_id is null;
             update bc.document_lines        set company_id = (select min(id) from master.companies) where company_id is null;
@@ -385,6 +389,7 @@ public static class Db
             select id, @c from auth.users where role <> 'Super Admin'
             on conflict do nothing
             """, new { c = companyId });
+        await con.ExecuteAsync("update master.entities set company_id = @c where company_id is null", new { c = companyId });
 
         var custom = cfg?["Seed:AdminPassword"] is { Length: > 0 };
         Console.WriteLine("[seed] master data + 2 users created (admin@energi-up.com, bc.bontang@energi-up.com) — "

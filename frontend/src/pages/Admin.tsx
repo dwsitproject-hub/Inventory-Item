@@ -411,9 +411,10 @@ function Users() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [roles, setRoles] = useState<string[]>([])
   const [cos, setCos] = useState<Company[]>([])
+  const [ents, setEnts] = useState<{ id: number; code: string; name: string; companyId: number | null }[]>([])
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
-  const [form, setForm] = useState({ email: '', fullName: '', role: 'Site BC User', allEntities: false, entityId: '1', password: '', companyIds: [] as number[] })
+  const [form, setForm] = useState({ email: '', fullName: '', role: 'Site BC User', allEntities: false, entityId: '', password: '', companyIds: [] as number[] })
   const [showForm, setShowForm] = useState(false)
   const [editCosFor, setEditCosFor] = useState<number | null>(null)
   const [editCos, setEditCos] = useState<number[]>([])
@@ -421,11 +422,14 @@ function Users() {
   const refresh = () => {
     adminUsers().then(d => { setUsers(d.users); setRoles(d.roles) }).catch(e => setError(e.message))
     listCompanies().then(setCos).catch(() => { /* non-fatal */ })
+    adminMaster().then((d: any) => setEnts(d.entities ?? [])).catch(() => { /* non-fatal */ })
   }
   useEffect(() => { refresh() }, [])
 
   const activeCos = cos.filter(c => c.active)
   const isSuperForm = form.role === 'Super Admin'
+  // Company owns Entity: the Scope picker only offers entities of the companies chosen above.
+  const scopeEnts = ents.filter(e => e.companyId != null && form.companyIds.includes(e.companyId))
   const toggleFormCompany = (id: number) =>
     setForm(f => ({ ...f, companyIds: f.companyIds.includes(id) ? f.companyIds.filter(x => x !== id) : [...f.companyIds, id] }))
 
@@ -489,12 +493,6 @@ function Users() {
               {roles.map(r => <option key={r}>{r}</option>)}
             </select>
           </div>
-          <div className="f"><label>Scope</label>
-            <select value={form.allEntities ? 'all' : 'entity'} onChange={e => setForm({ ...form, allEntities: e.target.value === 'all' })}>
-              <option value="entity">Entity #1 (PT EUP)</option>
-              <option value="all">All entities (Super Admin only)</option>
-            </select>
-          </div>
           <div className="f"><label>Initial password</label><input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
           {isSuperForm
             ? <div className="f" style={{ flexBasis: '100%' }}><label>Companies</label><span className="note">A Super Admin spans all companies automatically.</span></div>
@@ -507,6 +505,23 @@ function Users() {
                   ))}
                   {activeCos.length === 0 && <span className="note">No active companies — register one in the Companies tab first.</span>}
                 </div>
+              </div>}
+          {isSuperForm
+            ? <div className="f" style={{ flexBasis: '100%' }}><label>Scope</label><span className="note">A Super Admin spans every entity of every company automatically.</span></div>
+            : <div className="f" style={{ flexBasis: '100%' }}><label>Scope (entity within the assigned company)</label>
+                <select
+                  value={form.allEntities ? 'all' : form.entityId}
+                  onChange={e => e.target.value === 'all'
+                    ? setForm({ ...form, allEntities: true, entityId: '' })
+                    : setForm({ ...form, allEntities: false, entityId: e.target.value })}>
+                  <option value="all">All entities in the assigned company/companies</option>
+                  {scopeEnts.map(en => (
+                    <option key={en.id} value={String(en.id)}>{en.name} ({en.code})</option>
+                  ))}
+                </select>
+                {form.companyIds.length === 0
+                  ? <span className="note">Choose a company above to list its entities.</span>
+                  : scopeEnts.length === 0 && <span className="note">The selected company has no entities yet — add one in the Master Data tab.</span>}
               </div>}
           <button className="btn p" onClick={create}>Create</button>
         </div>
@@ -561,13 +576,18 @@ function Users() {
 
 function Master() {
   const [data, setData] = useState<any>(null)
+  const [cos, setCos] = useState<Company[]>([])
   const [error, setError] = useState('')
-  const [ent, setEnt] = useState({ code: '', name: '' })
+  const [ent, setEnt] = useState({ code: '', name: '', companyId: '' })
   const [site, setSite] = useState({ entityId: '1', name: '' })
   const [permit, setPermit] = useState({ entityId: '1', permitNo: '' })
 
-  const refresh = () => adminMaster().then(setData).catch(e => setError(e.message))
+  const refresh = () => {
+    adminMaster().then(setData).catch(e => setError(e.message))
+    listCompanies().then(setCos).catch(() => { /* non-fatal */ })
+  }
   useEffect(() => { refresh() }, [])
+  const activeCos = cos.filter(c => c.active)
 
   async function run(fn: () => Promise<any>) {
     setError('')
@@ -583,11 +603,15 @@ function Master() {
       <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <div className="panel">
           <h3>Entities (PT)</h3>
-          {data.entities.map((e: any) => <div className="item" key={e.id}><span><b>{e.code}</b> — {e.name}</span></div>)}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          {data.entities.map((e: any) => <div className="item" key={e.id}><span><b>{e.code}</b> — {e.name} {e.companyName && <small style={{ color: 'var(--muted)' }}>({e.companyName})</small>}</span></div>)}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            <select value={ent.companyId} onChange={e => setEnt({ ...ent, companyId: e.target.value })}>
+              <option value="">Company…</option>
+              {activeCos.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
             <input placeholder="Code" style={{ width: 90 }} value={ent.code} onChange={e => setEnt({ ...ent, code: e.target.value })} className="f-input" />
-            <input placeholder="Name" style={{ flex: 1 }} value={ent.name} onChange={e => setEnt({ ...ent, name: e.target.value })} />
-            <button className="btn p" onClick={() => run(() => adminAddEntity(ent.code, ent.name))}>Add</button>
+            <input placeholder="Name" style={{ flex: 1, minWidth: 120 }} value={ent.name} onChange={e => setEnt({ ...ent, name: e.target.value })} />
+            <button className="btn p" disabled={!ent.companyId} onClick={() => run(async () => { await adminAddEntity(ent.code, ent.name, Number(ent.companyId)); setEnt({ code: '', name: '', companyId: '' }) })}>Add</button>
           </div>
         </div>
         <div className="panel">
