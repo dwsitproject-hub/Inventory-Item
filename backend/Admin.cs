@@ -6,6 +6,7 @@ namespace BcInventory.Api;
 public record CreateUserRequest(string Email, string FullName, string Role, bool AllEntities, long? EntityId, long? SiteId, string Password, long[]? CompanyIds);
 public record ResetPasswordRequest(string Password);
 public record StatusRequest(string Status);
+public record ScopeRequest(bool AllEntities, long? EntityId);
 public record EntityRequest(string Code, string Name, long? CompanyId);
 public record SiteRequest(long EntityId, string Name);
 public record PermitRequest(long EntityId, long? SiteId, string PermitNo);
@@ -128,6 +129,38 @@ public static class Admin
         Sessions.Invalidate(id);
         await Notifications.Emit(con, "security", $"Password reset — {email}", $"By {scope.Email}");
         Audit.Log("admin.user.reset", scope, "user", id.ToString(), $"Reset password for {email}", new { email });
+        return Results.Ok(new { id });
+    }
+
+    public static async Task<IResult> SetScope(NpgsqlDataSource ds, UserScope scope, long id, ScopeRequest req)
+    {
+        if (await RequireAdmin(scope, "edit") is { } err) return err;
+        // All-entities scope stays a Super-Admin-only grant, exactly as at create time.
+        if (req.AllEntities && scope.Role != "Super Admin")
+            return Results.Problem(statusCode: 403, title: "AUTH-003", detail: "Only a Super Admin can grant all-entities scope.");
+        if (!req.AllEntities && req.EntityId is null)
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "entityId required unless allEntities.");
+
+        await using var con = await ds.OpenConnectionAsync();
+        var target = await con.QueryFirstOrDefaultAsync(
+            "select email, role from auth.users where id = @id", new { id });
+        if (target is null) return Results.Problem(statusCode: 404, title: "VAL-001", detail: "User not found.");
+
+        // Company owns Entity: a scope-locked user's entity must belong to one of the companies
+        // they are assigned to. A Super-Admin-role user spans every company, so skip the check.
+        if (!req.AllEntities && req.EntityId is not null && (string)target.role != "Super Admin"
+            && !await con.ExecuteScalarAsync<bool>(
+                "select exists (select 1 from master.entities e join auth.user_companies uc on uc.company_id = e.company_id where e.id = @e and uc.user_id = @id)",
+                new { e = req.EntityId, id }))
+            return Results.Problem(statusCode: 400, title: "VAL-001", detail: "The chosen entity is not in the assigned company.");
+
+        // Session middleware re-reads scope each request; invalidate so the change lands at once.
+        await con.ExecuteAsync(
+            "update auth.users set all_entities = @a, entity_id = @e, site_id = null where id = @id",
+            new { a = req.AllEntities, e = req.AllEntities ? null : req.EntityId, id });
+        Sessions.Invalidate(id);
+        Audit.Log("admin.user.scope", scope, "user", id.ToString(), $"Set scope for {(string)target.email}",
+            new { req.AllEntities, req.EntityId });
         return Results.Ok(new { id });
     }
 

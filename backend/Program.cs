@@ -247,6 +247,9 @@ api.MapPost("/admin/users/{id:long}/status", (long id, StatusRequest req, HttpCo
 api.MapPost("/admin/users/{id:long}/reset", (long id, ResetPasswordRequest req, HttpContext ctx) =>
     Admin.ResetPassword(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
 
+api.MapPut("/admin/users/{id:long}/scope", (long id, ScopeRequest req, HttpContext ctx) =>
+    Admin.SetScope(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
+
 api.MapGet("/admin/master", (System.Security.Claims.ClaimsPrincipal user) =>
     Admin.Master(ds, Auth.Scope(user))).RequireAuthorization();
 

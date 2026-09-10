@@ -3,7 +3,7 @@ import {
   AdminUser, Company, NotifMatrix, NotifSaveRow, RoleMatrix, RolePermRow, adminAddEntity, adminAddPermit,
   adminAddSite, adminCreateUser, adminMaster, adminResetPassword, adminSetStatus, adminUsers, can,
   companies as listCompanies, createCompany, getUser, me, notificationSubscriptions, rolePermissions,
-  saveNotificationSubscriptions, saveRolePermissions, setPermissions, setUserCompanies, updateCompany
+  saveNotificationSubscriptions, saveRolePermissions, setPermissions, setUserCompanies, setUserScope, updateCompany
 } from '../api'
 import { fmtInt } from '../format'
 
@@ -418,6 +418,8 @@ function Users() {
   const [showForm, setShowForm] = useState(false)
   const [editCosFor, setEditCosFor] = useState<number | null>(null)
   const [editCos, setEditCos] = useState<number[]>([])
+  const [editScopeFor, setEditScopeFor] = useState<number | null>(null)
+  const [editScope, setEditScope] = useState<{ allEntities: boolean; entityId: string }>({ allEntities: false, entityId: '' })
 
   const refresh = () => {
     adminUsers().then(d => { setUsers(d.users); setRoles(d.roles) }).catch(e => setError(e.message))
@@ -461,6 +463,20 @@ function Users() {
   }
   const toggleEditCompany = (cid: number) =>
     setEditCos(cs => cs.includes(cid) ? cs.filter(x => x !== cid) : [...cs, cid])
+
+  function openScopeEdit(u: AdminUser) {
+    if (editScopeFor === u.id) { setEditScopeFor(null); return }
+    setEditScopeFor(u.id); setEditCosFor(null)
+    setEditScope({ allEntities: u.allEntities, entityId: u.entityId != null ? String(u.entityId) : '' })
+    setError(''); setInfo('')
+  }
+  async function saveScopeEdit(u: AdminUser) {
+    setError('')
+    try {
+      await setUserScope(u.id, editScope.allEntities, editScope.allEntities ? null : Number(editScope.entityId))
+      setInfo(`Scope updated for ${u.email}.`); setEditScopeFor(null); refresh()
+    } catch (e: any) { setError(e.message) }
+  }
 
   async function toggleStatus(u: AdminUser) {
     setError('')
@@ -546,11 +562,39 @@ function Users() {
                     {u.status === 'active' ? 'Disable' : 'Enable'}
                   </button>
                   <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => reset(u)}>Reset</button>
+                  {!superU && <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => openScopeEdit(u)}>
+                    {editScopeFor === u.id ? 'Close' : 'Scope'}
+                  </button>}
                   {!superU && <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => openCompanyEdit(u)}>
                     {editCosFor === u.id ? 'Close' : 'Companies'}
                   </button>}
                 </td>
               </tr>
+              {editScopeFor === u.id && (() => {
+                const uEnts = ents.filter(e => e.companyId != null && (u.companyIds ?? []).includes(e.companyId))
+                return (
+                <tr>
+                  <td colSpan={7} style={{ background: '#f6f8fa', whiteSpace: 'normal' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+                      <label className="cochk" style={{ margin: 0 }}>
+                        <input type="checkbox" checked={editScope.allEntities}
+                          onChange={e => setEditScope({ ...editScope, allEntities: e.target.checked })} /> All entities in the assigned company/companies
+                      </label>
+                      {!editScope.allEntities && (
+                        <select value={editScope.entityId} onChange={e => setEditScope({ ...editScope, entityId: e.target.value })}>
+                          <option value="">Select entity…</option>
+                          {uEnts.map(en => <option key={en.id} value={String(en.id)}>{en.name} ({en.code})</option>)}
+                        </select>
+                      )}
+                    </div>
+                    {!editScope.allEntities && (u.companyIds ?? []).length === 0 && <div className="note" style={{ marginBottom: 8 }}>Assign a company first to pick an entity.</div>}
+                    {!editScope.allEntities && (u.companyIds ?? []).length > 0 && uEnts.length === 0 && <div className="note" style={{ marginBottom: 8 }}>The assigned company has no entities yet — add one in Master Data.</div>}
+                    <button className="btn p" style={{ padding: '4px 12px', fontSize: 12 }}
+                      disabled={!editScope.allEntities && !editScope.entityId}
+                      onClick={() => saveScopeEdit(u)}>Save scope</button>
+                  </td>
+                </tr>
+              )})()}
               {editCosFor === u.id && (
                 <tr>
                   <td colSpan={7} style={{ background: '#f6f8fa', whiteSpace: 'normal' }}>
@@ -579,8 +623,6 @@ function Master() {
   const [cos, setCos] = useState<Company[]>([])
   const [error, setError] = useState('')
   const [ent, setEnt] = useState({ code: '', name: '', companyId: '' })
-  const [site, setSite] = useState({ entityId: '1', name: '' })
-  const [permit, setPermit] = useState({ entityId: '1', permitNo: '' })
 
   const refresh = () => {
     adminMaster().then(setData).catch(e => setError(e.message))
@@ -597,58 +639,105 @@ function Master() {
   if (error && !data) return <div className="err">{error}</div>
   if (!data) return <div className="loading"><span className="spin" />loading…</div>
 
+  // Build the Company → Entity → Sites/Permits tree the super admin manages. Companies come from
+  // the Companies tab; entities/sites/permits are grouped underneath so the mapping is visible.
+  const entsByCompany = (companyId: number) => data.entities.filter((e: any) => e.companyId === companyId)
+  const orphanEnts = data.entities.filter((e: any) => e.companyId == null)
+  // Show every active company, plus any (inactive) company that still owns entities.
+  const shownCos = [...activeCos, ...cos.filter(c => !c.active && entsByCompany(c.id).length > 0)]
+
   return (
     <>
       {error && <div className="err" style={{ marginBottom: 12 }}>{error}</div>}
-      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <div className="panel">
-          <h3>Entities (PT)</h3>
-          {data.entities.map((e: any) => <div className="item" key={e.id}><span><b>{e.code}</b> — {e.name} {e.companyName && <small style={{ color: 'var(--muted)' }}>({e.companyName})</small>}</span></div>)}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-            <select value={ent.companyId} onChange={e => setEnt({ ...ent, companyId: e.target.value })}>
-              <option value="">Company…</option>
-              {activeCos.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <input placeholder="Code" style={{ width: 90 }} value={ent.code} onChange={e => setEnt({ ...ent, code: e.target.value })} className="f-input" />
-            <input placeholder="Name" style={{ flex: 1, minWidth: 120 }} value={ent.name} onChange={e => setEnt({ ...ent, name: e.target.value })} />
-            <button className="btn p" disabled={!ent.companyId} onClick={() => run(async () => { await adminAddEntity(ent.code, ent.name, Number(ent.companyId)); setEnt({ code: '', name: '', companyId: '' }) })}>Add</button>
-          </div>
-        </div>
-        <div className="panel">
-          <h3>Sites</h3>
-          {data.sites.map((s: any) => <div className="item" key={s.id}><span>{s.name} <small style={{ color: 'var(--muted)' }}>({s.entityName})</small></span></div>)}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <select value={site.entityId} onChange={e => setSite({ ...site, entityId: e.target.value })}>
-              {data.entities.map((e: any) => <option key={e.id} value={e.id}>{e.code}</option>)}
-            </select>
-            <input placeholder="Site name" style={{ flex: 1 }} value={site.name} onChange={e => setSite({ ...site, name: e.target.value })} />
-            <button className="btn p" onClick={() => run(() => adminAddSite(Number(site.entityId), site.name))}>Add</button>
-          </div>
-        </div>
+      <div className="note" style={{ marginBottom: 12 }}>
+        Company → Entity (PT) → Sites &amp; TPB permits. TPB permits also auto-register from ingestion; test entries are blocked on save (FR-A4).
       </div>
-      <div className="panel">
-        <h3>TPB permits <small style={{ color: 'var(--muted)', fontWeight: 400 }}>· auto-registered from ingestion; test entries blocked on save (FR-A4)</small></h3>
-        <div className="gridscroll" style={{ maxHeight: '38vh' }}>
-          <table className="grid">
-            <thead><tr><th>TPB Permit No</th><th>Entity</th><th>Site</th><th>Documents</th></tr></thead>
-            <tbody>
-              {data.permits.map((p: any) => (
-                <tr key={p.id}>
-                  <td>{p.permitNo}</td><td>{p.entityName}</td><td>{p.siteName ?? '—'}</td>
-                  <td className="num">{fmtInt(p.documents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+      {shownCos.map(c => (
+        <div className="panel" key={c.id} style={{ marginBottom: 14 }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {c.name}
+            {!c.active && <span className="badge b-warn">inactive</span>}
+            <small style={{ color: 'var(--muted)', fontWeight: 400 }}>· {entsByCompany(c.id).length} entit{entsByCompany(c.id).length === 1 ? 'y' : 'ies'}</small>
+          </h3>
+
+          {entsByCompany(c.id).map((e: any) => (
+            <EntityNode key={e.id} ent={e}
+              sites={data.sites.filter((s: any) => s.entityId === e.id)}
+              permits={data.permits.filter((p: any) => p.entityId === e.id)}
+              run={run} />
+          ))}
+          {entsByCompany(c.id).length === 0 && <div className="note" style={{ marginLeft: 4 }}>No entities yet.</div>}
+
+          {c.active && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', borderTop: '1px dashed var(--line)', paddingTop: 12 }}>
+              <input placeholder="Entity code" style={{ width: 110 }} value={ent.companyId === String(c.id) ? ent.code : ''}
+                onChange={e2 => setEnt({ code: e2.target.value, name: ent.companyId === String(c.id) ? ent.name : '', companyId: String(c.id) })} className="f-input" />
+              <input placeholder="Entity name (PT …)" style={{ flex: 1, minWidth: 140 }} value={ent.companyId === String(c.id) ? ent.name : ''}
+                onChange={e2 => setEnt({ name: e2.target.value, code: ent.companyId === String(c.id) ? ent.code : '', companyId: String(c.id) })} />
+              <button className="btn p" disabled={ent.companyId !== String(c.id) || !ent.code || !ent.name}
+                onClick={() => run(async () => { await adminAddEntity(ent.code, ent.name, c.id); setEnt({ code: '', name: '', companyId: '' }) })}>+ Entity</button>
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-          <select value={permit.entityId} onChange={e => setPermit({ ...permit, entityId: e.target.value })}>
-            {data.entities.map((e: any) => <option key={e.id} value={e.id}>{e.code}</option>)}
-          </select>
-          <input placeholder="Permit no (e.g. 99/MK/WBC.16/2026)" style={{ flex: 1 }} value={permit.permitNo} onChange={e => setPermit({ ...permit, permitNo: e.target.value })} />
-          <button className="btn p" onClick={() => run(() => adminAddPermit(Number(permit.entityId), null, permit.permitNo))}>Add</button>
+      ))}
+
+      {orphanEnts.length > 0 && (
+        <div className="panel" style={{ marginBottom: 14 }}>
+          <h3>Unassigned entities <small style={{ color: 'var(--muted)', fontWeight: 400 }}>· no company</small></h3>
+          {orphanEnts.map((e: any) => (
+            <EntityNode key={e.id} ent={e}
+              sites={data.sites.filter((s: any) => s.entityId === e.id)}
+              permits={data.permits.filter((p: any) => p.entityId === e.id)}
+              run={run} />
+          ))}
         </div>
-      </div>
+      )}
     </>
+  )
+}
+
+/** One entity in the Master-data tree: its sites and TPB permits, each with an inline add control. */
+function EntityNode({ ent, sites, permits, run }:
+  { ent: any; sites: any[]; permits: any[]; run: (fn: () => Promise<any>) => Promise<void> }) {
+  const [siteName, setSiteName] = useState('')
+  const [permitNo, setPermitNo] = useState('')
+  const [permitSite, setPermitSite] = useState('')
+
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+      <div style={{ fontWeight: 600, marginBottom: 8 }}><b>{ent.code}</b> — {ent.name}</div>
+      <div className="row2" style={{ gridTemplateColumns: '1fr 1.4fr', gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>Sites</div>
+          {sites.map(s => <div className="item" key={s.id}><span>{s.name}</span></div>)}
+          {sites.length === 0 && <div className="note" style={{ marginBottom: 4 }}>No sites.</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <input placeholder="Site name" style={{ flex: 1 }} value={siteName} onChange={e => setSiteName(e.target.value)} />
+            <button className="btn o" disabled={!siteName} style={{ padding: '4px 10px', fontSize: 12 }}
+              onClick={() => run(async () => { await adminAddSite(ent.id, siteName); setSiteName('') })}>+ Site</button>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TPB permits</div>
+          {permits.map(p => (
+            <div className="item" key={p.id}>
+              <span>{p.permitNo} {p.siteName && <small style={{ color: 'var(--muted)' }}>· {p.siteName}</small>}</span>
+              <small style={{ color: 'var(--muted)' }}>{fmtInt(p.documents)} docs</small>
+            </div>
+          ))}
+          {permits.length === 0 && <div className="note" style={{ marginBottom: 4 }}>No permits.</div>}
+          <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+            <input placeholder="Permit no (e.g. 99/MK/WBC.16/2026)" style={{ flex: 1, minWidth: 150 }} value={permitNo} onChange={e => setPermitNo(e.target.value)} />
+            <select value={permitSite} onChange={e => setPermitSite(e.target.value)}>
+              <option value="">Entity-level</option>
+              {sites.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+            </select>
+            <button className="btn o" disabled={!permitNo} style={{ padding: '4px 10px', fontSize: 12 }}
+              onClick={() => run(async () => { await adminAddPermit(ent.id, permitSite ? Number(permitSite) : null, permitNo); setPermitNo(''); setPermitSite('') })}>+ Permit</button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }

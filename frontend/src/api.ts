@@ -306,6 +306,8 @@ export const adminSetStatus = (id: number, status: 'active' | 'disabled') =>
   request(`/admin/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
 export const adminResetPassword = (id: number, password: string) =>
   request(`/admin/users/${id}/reset`, { method: 'POST', body: JSON.stringify({ password }) })
+export const setUserScope = (id: number, allEntities: boolean, entityId: number | null) =>
+  request(`/admin/users/${id}/scope`, { method: 'PUT', body: JSON.stringify({ allEntities, entityId }) })
 export const adminMaster = () => request('/admin/master')
 export const adminAddEntity = (code: string, name: string, companyId: number) =>
   request('/admin/entities', { method: 'POST', body: JSON.stringify({ code, name, companyId }) })
