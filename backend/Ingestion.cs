@@ -271,13 +271,45 @@ public static class Ingestion
         var siteCache = new Dictionary<string, long>();
         var tpbCache = new Dictionary<string, long>();
         var docCache = new Dictionary<string, long>();
-        int lineNoFallback = 0;
 
         // reporting period for the stock/mutation templates (from the sheet name, e.g. "JULI 2026")
         var periodIso = parsed.HeaderMeta.GetValueOrDefault("period");
         var periodKey = periodIso is null
             ? Path.GetFileNameWithoutExtension(fileName)
             : periodIso[..7];                       // yyyy-MM
+
+        // ---- business-key upsert (FR-I6) --------------------------------------------------------
+        // For receipt-style reports the natural identity of a line is (NoPen, No PO, Kode Barang);
+        // GR No and Jumlah Barang are attributes a later export fills in or corrects. So re-uploading
+        // an overlapping file updates the matching line in place rather than appending a copy:
+        //   1. NoPen+PO+GR No+Kode Barang match, Jumlah Barang differs  -> update the line (qty + rest)
+        //   2. NoPen+PO+GR No match, Kode Barang is new                 -> insert a new line
+        //   3. NoPen+PO+Kode Barang match, GR No not yet in the system  -> update the line, filling GR No + rest
+        // Templates missing any of the three identity columns (stock/mutation reports) keep the plain
+        // append behaviour. Key names come from the field Catalog, never from user input. To resolve
+        // rules 1 vs 3 we pre-load the company's existing lines for this template, indexed by identity.
+        var upsertKeys = ResolveUpsertKeys(template);
+        var lineIndex = new Dictionary<string, List<LineRef>>();
+        if (upsertKeys is { } uk)
+        {
+            var grSel = uk.GrNo is null ? "''" : $"coalesce(data->>{Lit(uk.GrNo)}, '')";
+            var idxSql = $"""
+                select id,
+                       coalesce(data->>{Lit(uk.NoPen)}, '')      as n,
+                       coalesce(data->>{Lit(uk.NoPo)}, '')       as p,
+                       coalesce(data->>{Lit(uk.KodeBarang)}, '') as k,
+                       {grSel}                                   as g
+                from bc.document_lines
+                where company_id = @c and template = @t
+                """;
+            foreach (var r in await con.QueryAsync(idxSql, new { c = companyForRows, t = template }, tx))
+            {
+                var key = IdxKey((string)r.n, (string)r.p, (string)r.k);
+                if (!lineIndex.TryGetValue(key, out var lst)) lineIndex[key] = lst = new List<LineRef>();
+                lst.Add(new LineRef { Id = (long)r.id, Grno = ((string)r.g).Trim() });
+            }
+        }
+        int inserted = 0, updated = 0;
 
         foreach (var line in good)
         {
@@ -354,24 +386,77 @@ public static class Ingestion
                 docCache[docKey] = docId;
             }
 
-            var cmd = new NpgsqlCommand("""
-                insert into bc.document_lines (document_id, template, doc_type, doc_date, entity_id, site_id, tpb_id, line_no, data, ingestion_file_id, company_id)
-                values (@doc, @template, @docType, @docDate::date, @entityId, @siteId, @tpbId,
-                        coalesce((select max(line_no) from bc.document_lines where document_id = @doc), 0) + 1,
-                        @data, @fileId, @companyForRows)
-                """, con, tx);
-            cmd.Parameters.AddWithValue("doc", docId);
-            cmd.Parameters.AddWithValue("template", template);
-            cmd.Parameters.AddWithValue("docType", (object?)docType ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("docDate", (object?)docDateIso ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("entityId", entityId);
-            cmd.Parameters.AddWithValue("siteId", (object?)siteId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("tpbId", (object?)tpbId ?? DBNull.Value);
-            cmd.Parameters.Add(new NpgsqlParameter("data", NpgsqlDbType.Jsonb) { Value = JsonSerializer.Serialize(line.Data) });
-            cmd.Parameters.AddWithValue("fileId", fileId);
-            cmd.Parameters.AddWithValue("companyForRows", companyForRows);
-            await cmd.ExecuteNonQueryAsync();
-            lineNoFallback++;
+            // Decide insert vs in-place update from the business-key rules (see the block above).
+            LineRef? target = null;
+            string idxKey = "", grIn = "";
+            if (upsertKeys is { } uk2)
+            {
+                var n = Str(line, uk2.NoPen).Trim();
+                var p = Str(line, uk2.NoPo).Trim();
+                var k = Str(line, uk2.KodeBarang).Trim();
+                grIn = uk2.GrNo is null ? "" : Str(line, uk2.GrNo).Trim();
+                if (n.Length > 0 && p.Length > 0 && k.Length > 0)          // only upsert when identity is present
+                {
+                    idxKey = IdxKey(n, p, k);
+                    if (lineIndex.TryGetValue(idxKey, out var cands))
+                        target = grIn.Length > 0
+                            ? cands.FirstOrDefault(c => c.Grno == grIn)         // rule 1: same GR No -> update qty + rest
+                              ?? cands.FirstOrDefault(c => c.Grno.Length == 0)  // rule 3: GR No not yet set -> fill it + rest
+                            : cands.FirstOrDefault(c => c.Grno.Length == 0);    // no incoming GR No: match a GR-less line
+                    // no candidate, or only lines with a different, already-set GR No -> rule 2 (insert a new line)
+                }
+            }
+
+            var dataJson = JsonSerializer.Serialize(line.Data);
+            if (target is not null)
+            {
+                var up = new NpgsqlCommand("""
+                    update bc.document_lines
+                       set document_id = @doc, doc_type = @docType, doc_date = @docDate::date,
+                           site_id = @siteId, tpb_id = @tpbId, data = @data,
+                           ingestion_file_id = @fileId, company_id = @companyForRows, ingested_at = now()
+                     where id = @id
+                    """, con, tx);
+                up.Parameters.AddWithValue("doc", docId);
+                up.Parameters.AddWithValue("docType", (object?)docType ?? DBNull.Value);
+                up.Parameters.AddWithValue("docDate", (object?)docDateIso ?? DBNull.Value);
+                up.Parameters.AddWithValue("siteId", (object?)siteId ?? DBNull.Value);
+                up.Parameters.AddWithValue("tpbId", (object?)tpbId ?? DBNull.Value);
+                up.Parameters.Add(new NpgsqlParameter("data", NpgsqlDbType.Jsonb) { Value = dataJson });
+                up.Parameters.AddWithValue("fileId", fileId);
+                up.Parameters.AddWithValue("companyForRows", companyForRows);
+                up.Parameters.AddWithValue("id", target.Id);
+                await up.ExecuteNonQueryAsync();
+                if (grIn.Length > 0) target.Grno = grIn;   // later rows in this file see the GR No we just filled in
+                updated++;
+            }
+            else
+            {
+                var cmd = new NpgsqlCommand("""
+                    insert into bc.document_lines (document_id, template, doc_type, doc_date, entity_id, site_id, tpb_id, line_no, data, ingestion_file_id, company_id)
+                    values (@doc, @template, @docType, @docDate::date, @entityId, @siteId, @tpbId,
+                            coalesce((select max(line_no) from bc.document_lines where document_id = @doc), 0) + 1,
+                            @data, @fileId, @companyForRows)
+                    returning id
+                    """, con, tx);
+                cmd.Parameters.AddWithValue("doc", docId);
+                cmd.Parameters.AddWithValue("template", template);
+                cmd.Parameters.AddWithValue("docType", (object?)docType ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("docDate", (object?)docDateIso ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("entityId", entityId);
+                cmd.Parameters.AddWithValue("siteId", (object?)siteId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("tpbId", (object?)tpbId ?? DBNull.Value);
+                cmd.Parameters.Add(new NpgsqlParameter("data", NpgsqlDbType.Jsonb) { Value = dataJson });
+                cmd.Parameters.AddWithValue("fileId", fileId);
+                cmd.Parameters.AddWithValue("companyForRows", companyForRows);
+                var newId = (long)(await cmd.ExecuteScalarAsync())!;
+                if (idxKey.Length > 0)   // keep the index live so duplicates later in this same file collapse too
+                {
+                    if (!lineIndex.TryGetValue(idxKey, out var lst)) lineIndex[idxKey] = lst = new List<LineRef>();
+                    lst.Add(new LineRef { Id = newId, Grno = grIn });
+                }
+                inserted++;
+            }
         }
 
         foreach (var q in bad)
@@ -388,7 +473,8 @@ public static class Ingestion
         await tx.CommitAsync();
 
         // alert events (FR-N1): upload to everyone in scope; quarantine detail to stewards/admins
-        var summary = $"{template}: {Fmt.N(good.Count)}/{Fmt.N(parsed.Lines.Count)} rows loaded"
+        var loadDetail = upsertKeys is null ? "" : $" ({Fmt.N(inserted)} new, {Fmt.N(updated)} updated)";
+        var summary = $"{template}: {Fmt.N(good.Count)}/{Fmt.N(parsed.Lines.Count)} rows loaded{loadDetail}"
                       + (bad.Count > 0 ? $", {Fmt.N(bad.Count)} quarantined" : "") + $" · source: {source}";
         await Notifications.Emit(con, "upload", $"New file ingested — {fileName}", summary);
         if (bad.Count > 0)
@@ -396,20 +482,46 @@ public static class Ingestion
                 $"{Fmt.N(bad.Count)} row(s) failed validation and need review (Ingestion page).");
 
         Audit.Log("ingest.load", null, "file", fileName, summary,
-            new { ingestionId = fileId, template, source, hash, rowsTotal = parsed.Lines.Count, rowsLoaded = good.Count, rowsQuarantined = bad.Count },
+            new { ingestionId = fileId, template, source, hash, rowsTotal = parsed.Lines.Count, rowsLoaded = good.Count, rowsInserted = inserted, rowsUpdated = updated, rowsQuarantined = bad.Count },
             actorEmailOverride: uploadedBy);
 
         return new
         {
             status = bad.Count == 0 ? "loaded" : "partial",
             ingestionId = fileId, template,
-            rowsTotal = parsed.Lines.Count, rowsLoaded = good.Count, rowsQuarantined = bad.Count,
+            rowsTotal = parsed.Lines.Count, rowsLoaded = good.Count,
+            rowsInserted = inserted, rowsUpdated = updated, rowsQuarantined = bad.Count,
             headerMeta = parsed.HeaderMeta
         };
     }
 
     private static string Str(ParsedLine l, string k) => l.Data.TryGetValue(k, out var v) ? v?.ToString() ?? "" : "";
     private static string? StrOrNull(ParsedLine l, string k) { var s = Str(l, k); return s.Length == 0 ? null : s; }
+
+    // ---------- business-key upsert helpers (FR-I6) ----------
+    /// <summary>jsonb key names that make up a line's upsert identity for a template.</summary>
+    private sealed record UpsertKeys(string NoPen, string NoPo, string KodeBarang, string? GrNo);
+    /// <summary>A candidate existing line: its id and current GR No, tracked live during a load.</summary>
+    private sealed class LineRef { public long Id; public string Grno = ""; }
+
+    /// <summary>
+    /// Resolve a template's (NoPen, No PO, Kode Barang [, GR No]) jsonb keys from the field Catalog,
+    /// matching on the customs label or the verbatim column name. Returns null when the template lacks
+    /// any of the three identity columns, which turns the upsert off and keeps the plain append.
+    /// </summary>
+    private static UpsertKeys? ResolveUpsertKeys(string template)
+    {
+        var fields = Catalog.ByTemplate(template)?.Fields;
+        if (fields is null) return null;
+        string? K(string concept) => fields.FirstOrDefault(f => f.Label == concept || f.Name == concept)?.Name;
+        var nopen = K("NoPen"); var po = K("No PO"); var kode = K("Kode Barang");
+        return nopen is null || po is null || kode is null ? null : new UpsertKeys(nopen, po, kode, K("GR No"));
+    }
+
+    /// <summary>A jsonb key as a safe SQL string literal (keys are Catalog constants, but escape anyway).</summary>
+    private static string Lit(string s) => "'" + s.Replace("'", "''") + "'";
+    /// <summary>Identity index key: NoPen + No PO + Kode Barang, trimmed, with an unlikely separator.</summary>
+    private static string IdxKey(string n, string p, string k) => $"{n.Trim()}{p.Trim()}{k.Trim()}";
 
     // ---------- auto-ingest the real sample extracts at startup ----------
     public static async Task AutoIngestSamples(NpgsqlDataSource ds, string dir)
