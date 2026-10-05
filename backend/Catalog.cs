@@ -361,9 +361,13 @@ public static class Catalog
     /// false — two reports claiming one template would make layout identification ambiguous.
     /// </param>
     /// <param name="Browse">Appears in the report picker on its page.</param>
+    // PreferOnTie: when several reports share a column layout and nothing in the sheet/file/title
+    // names one of them, this report wins instead of the upload being rejected as ambiguous. Used
+    // where a long-established report gained a same-layout sibling later, so its existing files
+    // (which never needed a name hint) keep loading exactly as before.
     public record Report(string Key, string Title, string Template, Field[] Fields, string[] Defaults,
                          string[] SearchFields, string Page = "reports", string[]? NameHints = null,
-                         string? Where = null, bool Upload = true, bool Browse = true);
+                         string? Where = null, bool Upload = true, bool Browse = true, bool PreferOnTie = false);
 
     // Kode Barang prefixes that route rows out of the file they arrived in. Sparepart is the 9xx
     // range except 912; 912 is bahan penolong and is reported with Bahan Baku; everything else in
@@ -378,8 +382,13 @@ public static class Catalog
     {
         new("pib-import", "Pemasukan Barang — PIB Import (BC 2.3)", "BC23", Pib, PibDefaults, PibSearch),
         new("bc40-receipt", "Pemasukan Barang — BC 4.0", "BC40", Bc40, Bc40Defaults, Bc40Search),
+        // BC 3.0 and BC 3.3 share one layout. BC 3.0 predates BC 3.3 and its real files carry no
+        // name hint (sheet "Lap Pengeluaran Barang …", file "Laporan BC3.0"), so it stays the
+        // default; a file is read as BC 3.3 only when its sheet, file name or title says so.
         new("bc30-export", "Pengeluaran Barang — BC 3.0 (PEB)", "BC30", Bc30, Bc30Defaults, Bc30Search,
-            "reports", new[] { "BC 3.0", "BC30" }),
+            "reports", new[] { "BC 3.0", "BC3.0", "BC30" }, PreferOnTie: true),
+        new("bc33-export", "Pengeluaran Barang — BC 3.3", "BC33", Bc30, Bc30Defaults, Bc30Search,
+            "reports", new[] { "BC 3.3", "BC3.3", "BC33" }),
         new("bc27-in", "Pemasukan Barang — BC 2.7", "BC27IN", Bc27In, Bc27InDefaults, Bc27InSearch,
             "reports", new[] { "BC 2.7", "27IN" }),
         // These three share one layout; the hint is the only thing that separates them.

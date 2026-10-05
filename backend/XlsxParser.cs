@@ -162,7 +162,7 @@ public static class XlsxParser
             if (best is null) continue;
 
             // Several reports share a column layout byte-for-byte (Bahan Baku / Barang Jadi,
-            // Aset dan Sparepart / Scraps). Only the sheet or file name can separate them.
+            // Aset dan Sparepart / Scraps, BC 3.0 / BC 3.3). Only the sheet or file name can separate them.
             if (tied.Count > 1)
             {
                 // the title line above the header often names the report even when the sheet is "Sheet1"
@@ -172,7 +172,9 @@ public static class XlsxParser
                 {
                     var rep = Catalog.Reports.First(x => x.Template == t && x.Upload);
                     return (rep.NameHints ?? Array.Empty<string>()).Any(h => hint.Contains(Norm(h)));
-                });
+                })
+                // nothing names a report: fall back to the established one of the group, if it has one
+                ?? tied.FirstOrDefault(t => Catalog.Reports.First(x => x.Template == t && x.Upload).PreferOnTie);
                 if (pick is null)
                 {
                     var titles = tied.Select(t => Catalog.Reports.First(x => x.Template == t && x.Upload).Title);

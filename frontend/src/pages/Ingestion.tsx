@@ -206,9 +206,11 @@ export default function Ingestion() {
         <div className="note" style={{ marginTop: 10 }}>
           <b>⭳ .xlsx</b> gives you a blank workbook with these exact headers plus a “Petunjuk” sheet
           explaining each column — fill it in and upload it straight back. Columns are matched by
-          header text, so they may be reordered. Bahan Baku and Barang Jadi share an identical
-          14-column header, so those two are told apart by the sheet or file name; every other
-          template is identified from its columns alone.
+          header text, so they may be reordered. Some reports share an identical header — Bahan Baku /
+          Barang Jadi, BC 2.7 Out / BC 2.5 / BC 4.1, and BC 3.0 / BC 3.3 — so those are told apart by
+          the sheet name, file name or title row (a downloaded blank already carries it). A BC 3.0 /
+          BC 3.3 file that names neither is read as BC 3.0; every other template is identified from
+          its columns alone.
         </div>
       </div>
     </>

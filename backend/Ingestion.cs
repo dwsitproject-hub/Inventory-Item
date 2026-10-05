@@ -206,7 +206,7 @@ public static class Ingestion
             {
                 status = "rejected",
                 message = "Unrecognised template/format (FR-I8). Supported: BC23 (TSV), BC40 (HTML table), " +
-                          "and the xlsx templates WIP, Bahan Baku, Barang Jadi, Aset dan Sparepart, BC 3.0."
+                          "and the xlsx templates WIP, Bahan Baku, Barang Jadi, Aset dan Sparepart, BC 3.0, BC 3.3."
             };
 
         ParseResult parsed;
@@ -321,7 +321,7 @@ public static class Ingestion
                 docType = Str(line, "Tipe PIB");
                 docDateIso = StrOrNull(line, "PibDate");
             }
-            else if (template is "BC30" or "BC27IN" or "BC27OUT" or "BC25" or "BC41")
+            else if (template is "BC30" or "BC33" or "BC27IN" or "BC27OUT" or "BC25" or "BC41")
             {
                 // Customs-document reports that all carry the same identity columns.
                 aju = "";
@@ -377,7 +377,7 @@ public static class Ingestion
                     {
                         "BC23" => StrOrNull(line, "Supplier Name"),
                         "BC40" => StrOrNull(line, "Vendor Name"),
-                        "BC30" or "BC27OUT" or "BC25" or "BC41" => StrOrNull(line, "Penerima / Pembeli"),
+                        "BC30" or "BC33" or "BC27OUT" or "BC25" or "BC41" => StrOrNull(line, "Penerima / Pembeli"),
                         "BC27IN" => StrOrNull(line, "Pemasok/Pengirim"),
                         _ => null                       // stock reports have no counterparty
                     },
