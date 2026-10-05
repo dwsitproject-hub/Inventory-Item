@@ -43,6 +43,15 @@ public static class Db
                 throw new InvalidOperationException(
                     "The database schema is behind this build (multi-company support is missing). " +
                     "Run the API once with --migrate using an account that owns the tables.");
+            // Company owns Entity. Without this column the API still starts, but /auth/me (every
+            // sign-in, password or SSO) and Admin → Master Data fail with a 500 — so refuse loudly.
+            var hasEntityCompany = await check.ExecuteScalarAsync<bool>(
+                "select exists (select 1 from information_schema.columns " +
+                "where table_schema='master' and table_name='entities' and column_name='company_id')");
+            if (!hasEntityCompany)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (master.entities.company_id is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
             Console.WriteLine("[schema] verified (auto-migrate off — this account may not alter the schema)");
             return;
         }

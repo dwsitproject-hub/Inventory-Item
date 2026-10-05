@@ -89,9 +89,17 @@ The `sso_sub` column is a schema change; apply it with the owner account, then r
 
 ```bash
 cd /opt/bc-inventory/deploy/backend \
-  && DB_USER=<owner> DB_PASSWORD='<owner pw>' DB_AUTO_MIGRATE=true docker compose run --rm api --migrate
+  && DB_USER=PGADMIN DB_PASSWORD='PGADMIN_PW' DB_AUTO_MIGRATE=true docker compose run --rm api --migrate
 cd /opt/bc-inventory/deploy && ./update.sh backend
 ```
+
+`PGADMIN` / `PGADMIN_PW` are the database owner account and its password — type the real values,
+with **no `< >` brackets** (bash reads `<` as a file redirect and fails with
+`No such file or directory`).
+
+> Any release that changes the schema needs this owner `--migrate` again before its backend
+> starts — staging runs with `DB_AUTO_MIGRATE=false`. The API refuses to start against a schema
+> it is ahead of and names the missing column in `docker logs bc-inventory-api`.
 
 Redeploy the frontend so it has the SSO button and callback route:
 
@@ -123,3 +131,5 @@ Audit Log records the event as `auth.sso_login`.
 | SSO-004 | id_token failed verification (signature, `iss`/`aud`, expiry, or nonce) |
 | SSO-005 | verified Hub user has no active BC Inventory account — create it first |
 | SSO-006 | server error after verification — usually the `sso_sub` schema update was not applied on this host (run the `--migrate` below), or another unexpected failure (check `docker logs bc-inventory-api`) |
+| "Internal Server Error" on the callback page | the token exchange succeeded but loading the profile (`/auth/me`) failed — usually a schema change not yet applied with the owner `--migrate` (e.g. `master.entities.company_id`). Builds after this fix refuse to start instead, naming the missing column. |
+| "Cannot read properties of undefined (reading 'digest')" on the button | the page is served over plain HTTP, where browsers withhold `crypto.subtle`. Fixed: the SPA falls back to a built-in SHA-256 for the PKCE challenge. Redeploy the frontend. |
