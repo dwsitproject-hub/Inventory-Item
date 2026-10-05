@@ -7,9 +7,9 @@ namespace BcInventory.Api;
 /// Parser for .xlsx workbooks — both the vendor report templates (WIP, Aset &amp; Sparepart,
 /// Bahan Baku, Barang Jadi, BC 3.0) and the blank templates this system hands out for
 /// re-upload. Columns are mapped by header text, so a user may reorder or omit columns.
-/// Templates are identified by header fingerprint, never by file name — except Bahan Baku vs
-/// Barang Jadi, whose headers are byte-identical, where the sheet/file name is the only
-/// available discriminator (FR-I8/I9).
+/// Templates are identified by header fingerprint, never by file name — except where reports
+/// share byte-identical headers: BC 3.0 vs BC 3.3 are told apart by the rows' "Jenis Dok." code,
+/// and the rest (e.g. Bahan Baku vs Barang Jadi) by the sheet/file name (FR-I8/I9).
 /// </summary>
 public static class XlsxParser
 {
@@ -103,6 +103,44 @@ public static class XlsxParser
 
     private record Layout(Catalog.Report Report, int HeaderRow, int HeaderRows, Dictionary<int, Field> Columns, List<string> Unmapped);
 
+    /// <summary>
+    /// Separate same-layout reports by the document-type code in their rows (BC 3.0 vs BC 3.3 by
+    /// "Jenis Dok." 30 / 33). Returns the one template every recognised code points at; null when
+    /// the reports define no such column or no row carries a recognised code (the caller then falls
+    /// back to name hints). A file mixing codes of different reports is rejected, never guessed.
+    /// </summary>
+    private static string? PickByDocType(IXLWorksheet ws, Layout layout, List<string> tied)
+    {
+        var reps = tied.Select(t => Catalog.Reports.First(x => x.Template == t && x.Upload))
+                       .Where(x => x.DocTypeColumn is not null && x.DocTypeValues is { Length: > 0 })
+                       .ToList();
+        if (reps.Count == 0) return null;
+        var col = layout.Columns.FirstOrDefault(kv => kv.Value.Name == reps[0].DocTypeColumn).Key;
+        if (col == 0) return null;                       // column omitted from this upload
+
+        var found = new HashSet<string>();
+        var lastRow = ws.LastRowUsed()?.RowNumber() ?? 0;
+        for (int row = layout.HeaderRow + layout.HeaderRows; row <= lastRow; row++)
+        {
+            var code = DocCode(Cell(ws, row, col));
+            if (code.Length == 0) continue;
+            var rep = reps.FirstOrDefault(x => x.DocTypeValues!.Any(v => DocCode(v) == code));
+            if (rep is not null) found.Add(rep.Template);
+        }
+        if (found.Count > 1)
+        {
+            var titles = found.Select(t => Catalog.Reports.First(x => x.Template == t && x.Upload).Title);
+            throw new InvalidDataException(
+                $"This file mixes {string.Join(" and ", titles)} rows (by {reps[0].DocTypeColumn}); " +
+                "upload each document type as a separate file.");
+        }
+        return found.SingleOrDefault();
+    }
+
+    /// <summary>"BC 3.3", "3.3", "33" and "bc33" all compare as "33".</summary>
+    private static string DocCode(string s) =>
+        System.Text.RegularExpressions.Regex.Replace(Norm(s), @"^BC|[\s.]", "");
+
     private static Layout? Identify(IXLWorksheet ws, string fileName)
     {
         var lastCol = Math.Min(ws.LastColumnUsed()?.ColumnNumber() ?? 0, 120);
@@ -162,13 +200,15 @@ public static class XlsxParser
             if (best is null) continue;
 
             // Several reports share a column layout byte-for-byte (Bahan Baku / Barang Jadi,
-            // Aset dan Sparepart / Scraps, BC 3.0 / BC 3.3). Only the sheet or file name can separate them.
+            // Aset dan Sparepart / Scraps, BC 3.0 / BC 3.3). A document-type code in the rows
+            // separates them when the reports define one; otherwise the sheet or file name must.
             if (tied.Count > 1)
             {
                 // the title line above the header often names the report even when the sheet is "Sheet1"
                 var title = r > 1 ? Cell(ws, r - 1, 1) : "";
                 var hint = Norm($"{ws.Name} {fileName} {title}");
-                var pick = tied.FirstOrDefault(t =>
+                var pick = PickByDocType(ws, best, tied)
+                ?? tied.FirstOrDefault(t =>
                 {
                     var rep = Catalog.Reports.First(x => x.Template == t && x.Upload);
                     return (rep.NameHints ?? Array.Empty<string>()).Any(h => hint.Contains(Norm(h)));

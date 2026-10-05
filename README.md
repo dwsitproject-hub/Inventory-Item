@@ -34,8 +34,8 @@ Laporan Aset) are **views** over the Aset dan Sparepart upload rather than separ
 |---|---|---|---|
 | Pemasukan Barang — PIB Import (BC 2.3) | BC23 | Reports | tab-separated text (.xls) |
 | Pemasukan Barang — BC 4.0 | BC40 | Reports | HTML table (.xls) |
-| Pengeluaran Barang — BC 3.0 (PEB) | BC30 | Reports | XLSX, 2-row merged header; default when a BC 3.0/3.3 file names neither |
-| Pengeluaran Barang — BC 3.3 | BC33 | Reports | XLSX — same layout as BC 3.0; sheet, file name or title must say "BC 3.3" |
+| Pengeluaran Barang — BC 3.0 (PEB) | BC30 | Reports | XLSX, 2-row merged header; rows with Jenis Dok. 30 |
+| Pengeluaran Barang — BC 3.3 | BC33 | Reports | XLSX — same layout as BC 3.0; rows with Jenis Dok. 33 (a file mixing 30 and 33 is rejected; with no code, the "BC 3.3" name hint decides, else BC 3.0) |
 | Pemasukan Barang — BC 2.7 | BC27IN | Reports | XLSX |
 | Pengeluaran Barang — BC 2.7 | BC27OUT | Reports | XLSX — shared layout |
 | Pengeluaran Barang — BC 2.5 | BC25 | Reports | XLSX — shared layout |
