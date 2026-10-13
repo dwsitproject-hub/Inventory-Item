@@ -102,6 +102,7 @@ Sso.Configure(app.Configuration);
 await Db.Seed(ds, app.Configuration);
 Permissions.Configure(ds);
 await Permissions.EnsureSeeded(ds);
+SiteReports.Configure(ds);
 
 if (migrateOnly)
 {
@@ -133,14 +134,19 @@ api.MapPost("/auth/sso/callback", (SsoCallbackRequest req, HttpContext ctx) =>
 
 api.MapGet("/me", (System.Security.Claims.ClaimsPrincipal user) => Auth.Me(ds, user)).RequireAuthorization();
 
-api.MapGet("/reports", () => Results.Ok(Reports.CatalogList())).RequireAuthorization();
+// The catalog is per user: a report the user's site is not configured to see is marked not
+// browsable (Admin → Master Data), so it drops out of the Reports / Inventory Movement picker.
+api.MapGet("/reports", async (System.Security.Claims.ClaimsPrincipal user) =>
+    Results.Ok(Reports.CatalogList(await SiteReports.For(Auth.Scope(user))))).RequireAuthorization();
 
 api.MapPost("/reports/{key}/query", async (string key, QueryRequest req, HttpContext ctx) =>
 {
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
     if (await Permissions.Require(scope, page, "view") is { } err) return err;
-    return await Reports.Query(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+    var view = await SiteReports.For(scope);
+    if (SiteReports.Require(view, key) is { } serr) return serr;
+    return await Reports.Query(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);
 }).RequireAuthorization();
 
 api.MapPost("/reports/{key}/export", async (string key, string? format, QueryRequest req, HttpContext ctx) =>
@@ -148,7 +154,9 @@ api.MapPost("/reports/{key}/export", async (string key, string? format, QueryReq
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
     if (await Permissions.Require(scope, page, "edit") is { } err) return err;
-    return await Exports.Run(ds, key, format ?? "xlsx", req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+    var view = await SiteReports.For(scope);
+    if (SiteReports.Require(view, key) is { } serr) return serr;
+    return await Exports.Run(ds, key, format ?? "xlsx", req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);
 }).RequireAuthorization();
 
 // Permanently delete ingested rows (FR-R14). Governed by the "delete" permission on the report's page.
@@ -157,7 +165,9 @@ api.MapPost("/reports/{key}/delete", async (string key, DeleteRequest req, HttpC
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
     if (await Permissions.Require(scope, page, "delete") is { } err) return err;
-    return await Reports.Delete(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+    var view = await SiteReports.For(scope);
+    if (SiteReports.Require(view, key) is { } serr) return serr;
+    return await Reports.Delete(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);
 }).RequireAuthorization();
 
 api.MapGet("/reports/{key}/template", (string key, HttpContext ctx) =>
@@ -247,8 +257,8 @@ api.MapPost("/admin/users/{id:long}/status", (long id, StatusRequest req, HttpCo
 api.MapPost("/admin/users/{id:long}/reset", (long id, ResetPasswordRequest req, HttpContext ctx) =>
     Admin.ResetPassword(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
 
-api.MapPut("/admin/users/{id:long}/scope", (long id, ScopeRequest req, HttpContext ctx) =>
-    Admin.SetScope(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
+api.MapPut("/admin/users/{id:long}/sites", (long id, SitesRequest req, HttpContext ctx) =>
+    Admin.SetSites(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
 
 api.MapGet("/admin/master", (System.Security.Claims.ClaimsPrincipal user) =>
     Admin.Master(ds, Auth.Scope(user))).RequireAuthorization();
@@ -260,11 +270,11 @@ api.MapGet("/admin/notification-subscriptions", (System.Security.Claims.ClaimsPr
 api.MapPut("/admin/notification-subscriptions", (NotificationSubscriptionUpdate req, HttpContext ctx) =>
     Notifications.UpdateSubscriptions(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 
-api.MapPost("/admin/entities", (EntityRequest req, HttpContext ctx) =>
-    Admin.AddEntity(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
-
 api.MapPost("/admin/sites", (SiteRequest req, HttpContext ctx) =>
     Admin.AddSite(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
+
+api.MapPut("/admin/sites/{id:long}/reports", (long id, SiteReportsRequest req, HttpContext ctx) =>
+    SiteReports.Set(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
 
 api.MapPost("/admin/tpb-permits", (PermitRequest req, HttpContext ctx) =>
     Admin.AddPermit(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
@@ -291,13 +301,14 @@ api.MapGet("/ingestions", async (System.Security.Claims.ClaimsPrincipal user) =>
     var scope = Auth.Scope(user);
     if (await Permissions.Require(scope, "ingestion", "view") is { } perr) return perr;
     await using var con = await ds.OpenConnectionAsync();
-    var companyWhere = scope.AllCompanies ? "" : " where company_id = any(@companies)";
     var rows = await con.QueryAsync($"""
-        select id, file_name as "fileName", template, source, status,
-               rows_total as "rowsTotal", rows_loaded as "rowsLoaded", rows_quarantined as "rowsQuarantined",
-               header_meta as "headerMeta", error, uploaded_by as "uploadedBy", received_at as "receivedAt"
-        from ingest.ingestion_files{companyWhere} order by received_at desc limit 50
-        """, new { companies = scope.CompanyIds });
+        select f.id, f.file_name as "fileName", f.template, f.source, f.status,
+               f.rows_total as "rowsTotal", f.rows_loaded as "rowsLoaded", f.rows_quarantined as "rowsQuarantined",
+               f.header_meta as "headerMeta", f.error, f.uploaded_by as "uploadedBy", f.received_at as "receivedAt",
+               s.name as "siteName"
+        from ingest.ingestion_files f left join master.sites s on s.id = f.site_id
+        where true{Sites.RowFilter(scope, "f")} order by f.received_at desc limit 50
+        """, new { scopeCompanies = scope.CompanyIds, scopeSites = scope.SiteIds });
     return Results.Ok(rows);
 }).RequireAuthorization();
 
@@ -329,10 +340,18 @@ api.MapPost("/ingestions/upload", async (HttpRequest http, HttpContext ctx) =>
     long? requested = long.TryParse(form["companyId"], out var cid) ? cid : null;
     var (companyId, cerr) = Companies.ResolveUploadCompany(scope, requested);
     if (cerr is not null) return cerr;
+    // ...and which of its sites. Every row of the file is tagged with it.
+    long? requestedSite = long.TryParse(form["siteId"], out var sid) ? sid : null;
+    long? siteId;
+    await using (var con = await ds.OpenConnectionAsync())
+    {
+        (siteId, var serr) = await Sites.ResolveUpload(con, scope, companyId!.Value, requestedSite);
+        if (serr is not null) return serr;
+    }
 
     using var ms = new MemoryStream();
     await file.CopyToAsync(ms);
-    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email, scope, companyId);
+    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email, scope, companyId, siteId);
     return Results.Ok(result);
 }).RequireAuthorization();
 

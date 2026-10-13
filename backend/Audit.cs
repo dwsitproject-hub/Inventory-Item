@@ -33,8 +33,8 @@ public static class Audit
                 await using var con = await ds.OpenConnectionAsync();
                 var cmd = new NpgsqlCommand("""
                     insert into audit.audit_events
-                        (actor_id, actor_email, actor_role, action, target_type, target_id, summary, detail, ip, actor_entity_id)
-                    values (@actorId, @actorEmail, @actorRole, @action, @targetType, @targetId, @summary, @detail, @ip, @actorEntityId)
+                        (actor_id, actor_email, actor_role, action, target_type, target_id, summary, detail, ip, actor_site_ids)
+                    values (@actorId, @actorEmail, @actorRole, @action, @targetType, @targetId, @summary, @detail, @ip, @actorSites)
                     """, con);
                 cmd.Parameters.AddWithValue("actorId", actor is { UserId: > 0 } ? actor.UserId : DBNull.Value);
                 cmd.Parameters.AddWithValue("actorEmail", (object?)(actorEmailOverride ?? actor?.Email) ?? DBNull.Value);
@@ -46,7 +46,8 @@ public static class Audit
                 cmd.Parameters.Add(new NpgsqlParameter("detail", NpgsqlDbType.Jsonb)
                 { Value = detail is null ? DBNull.Value : JsonSerializer.Serialize(detail) });
                 cmd.Parameters.AddWithValue("ip", (object?)ip ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("actorEntityId", (object?)actor?.EntityId ?? DBNull.Value);
+                // null = an all-sites (group-level) actor or the system, as actor_entity_id was before.
+                cmd.Parameters.AddWithValue("actorSites", actor is { AllSites: false } ? actor.SiteIds : DBNull.Value);
                 await cmd.ExecuteNonQueryAsync();
             }
             catch (Exception ex)
@@ -64,13 +65,25 @@ public static class Audit
         var w = new StringBuilder("1=1");
         var p = new DynamicParameters();
 
-        // Only Super Admin sees everything. An entity-scoped Admin/Auditor sees their own entity's
-        // activity plus actions by group-level (all-entity) users — those touch their data too —
-        // but never another entity's local activity.
+        // Only Super Admin sees everything. A site-scoped Admin/Auditor sees activity by actors
+        // sharing one of their sites, plus actions by group-level (all-site) users and the system —
+        // those touch their data too — but never another site's local activity. Events written
+        // before sites carry actor_entity_id instead; those match through the sites that entity had.
         if (scope.Role != "Super Admin")
         {
-            w.Append(" and (a.actor_entity_id = @scopeEntity or a.actor_entity_id is null or a.actor_id = @selfId)");
-            p.Add("scopeEntity", scope.EntityId);
+            const string mySites = """
+                (select s.id from master.sites s
+                  where s.id = any(@scopeSites) or (@allSites and s.company_id = any(@scopeCompanies)))
+                """;
+            w.Append($"""
+                 and (a.actor_id = @selfId
+                      or (a.actor_site_ids is null and a.actor_entity_id is null)
+                      or a.actor_site_ids && array{mySites}
+                      or a.actor_entity_id in (select s.entity_id from master.sites s where s.id in {mySites}))
+                """);
+            p.Add("scopeSites", scope.SiteIds);
+            p.Add("scopeCompanies", scope.CompanyIds);
+            p.Add("allSites", scope.AllSites);
             p.Add("selfId", scope.UserId);
         }
         if (DateOnly.TryParse(from, out var dFrom)) { w.Append(" and a.occurred_at >= @dFrom"); p.Add("dFrom", dFrom.ToDateTime(TimeOnly.MinValue)); }

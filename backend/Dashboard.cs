@@ -9,10 +9,12 @@ public static class Dashboard
     {
         await using var con = await ds.OpenConnectionAsync();
 
-        // Scope by the current entity + company. CompanyIds are longs, so inlining the array
-        // literal is injection-safe; empty -> any('{}') matches nothing, the safe default.
+        // Scope by the user's sites + companies. The ids are longs, so inlining the array literals
+        // is injection-safe; empty -> any('{}') matches nothing, the safe default.
         var arr = "'{" + string.Join(",", scope.CompanyIds) + "}'";
-        var ent = scope.AllEntities ? "" : "entity_id = " + scope.EntityId;
+        var siteArr = "'{" + string.Join(",", scope.SiteIds) + "}'";
+        var ent = scope.AllSites ? "" : "site_id = any(" + siteArr + ")";
+        var fSite = scope.AllSites ? "" : "f.site_id = any(" + siteArr + ")";
         var comp = scope.AllCompanies ? "" : "company_id = any(" + arr + ")";
         var fComp = scope.AllCompanies ? "" : "f.company_id = any(" + arr + ")";
         static string Clause(string glue, params string[] parts)
@@ -27,16 +29,16 @@ public static class Dashboard
               (select count(*) from bc.documents{rowWhere}) as documents,
               (select count(*) from bc.document_lines{rowWhere}) as lines,
               (select count(*) from ingest.ingestion_files
-                 where status in ('loaded','partial'){Clause(" and ", comp)}) as files_loaded,
+                 where status in ('loaded','partial'){Clause(" and ", comp, ent)}) as files_loaded,
               (select count(*) from ingest.quarantine_rows q
-                 join ingest.ingestion_files f on f.id = q.ingestion_file_id{Clause(" where ", fComp)}) as quarantined
+                 join ingest.ingestion_files f on f.id = q.ingestion_file_id{Clause(" where ", fComp, fSite)}) as quarantined
             """);
 
         var files = (await con.QueryAsync($"""
             select id, file_name as "fileName", template, source, status,
                    rows_total as "rowsTotal", rows_loaded as "rowsLoaded", rows_quarantined as "rowsQuarantined",
                    received_at as "receivedAt"
-            from ingest.ingestion_files{Clause(" where ", comp)} order by received_at desc limit 6
+            from ingest.ingestion_files{Clause(" where ", comp, ent)} order by received_at desc limit 6
             """)).ToList();
 
         var trend = (await con.QueryAsync($"""

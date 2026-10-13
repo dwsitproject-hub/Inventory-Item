@@ -2,7 +2,13 @@ const BASE = '/api/v1'
 
 /** `name` is the verbatim upload header (stable key for queries, sorts, saved views);
  *  `label` is the customs-terminology display name. */
-export type FieldMeta = { name: string; label: string; type: 'text' | 'number' | 'date'; group: string }
+export type FieldMeta = {
+  name: string; label: string; type: 'text' | 'number' | 'date'; group: string
+  /** a column a site must switch on (Admin → Master Data); left out of the starter set */
+  optIn?: boolean
+  /** whether the signed-in user's site may show it on the report screens */
+  visible?: boolean
+}
 export type ReportMeta = {
   key: string; title: string; template: string
   /** which screen hosts it: 'reports' (customs documents) or 'movement' (inventory movement) */
@@ -17,7 +23,8 @@ export type SortSpec = { field: string; dir: 'asc' | 'desc' }
 
 export type User = {
   email: string; fullName: string; role: string
-  allEntities: boolean; entityId: number | null; siteId: number | null
+  /** all sites of the user's companies; otherwise only `siteIds` */
+  allSites: boolean; siteIds: number[]
 }
 
 export type PagePerm = { view: boolean; insert: boolean; edit: boolean; delete: boolean }
@@ -78,6 +85,7 @@ export function clearSession() {
   sessionStorage.removeItem('bc.user')
   sessionStorage.removeItem('bc.perms')
   sessionStorage.removeItem('bc.company')
+  sessionStorage.removeItem('bc.sites')
 }
 
 // ---- multi-tenant company ----
@@ -90,6 +98,21 @@ export function getCompany(): MeCompany | null {
 export function setCompany(c: MeCompany | null | undefined) {
   if (c && c.id != null) sessionStorage.setItem('bc.company', JSON.stringify(c))
   else sessionStorage.removeItem('bc.company')
+}
+
+/** Sites the signed-in user may see (from /me) — the report screens' Site filter offers these. */
+export type MySite = { id: number; name: string; companyId: number }
+export function getMySites(): MySite[] {
+  const raw = sessionStorage.getItem('bc.sites')
+  return raw ? JSON.parse(raw) as MySite[] : []
+}
+export function setMySites(s: MySite[] | null | undefined) {
+  sessionStorage.setItem('bc.sites', JSON.stringify(s ?? []))
+}
+/** Refresh the stored user from /me, so a session signed in before a scope change shows it too. */
+export function setUserScope(u: Partial<User> | null | undefined) {
+  const cur = getUser()
+  if (cur && u) sessionStorage.setItem('bc.user', JSON.stringify({ ...cur, allSites: u.allSites, siteIds: u.siteIds }))
 }
 
 async function request(path: string, opts: RequestInit = {}): Promise<any> {
@@ -125,6 +148,7 @@ export async function login(email: string, password: string): Promise<void> {
   const profile = await me()
   setPermissions(profile.permissions ?? {})
   setCompany(profile.company)
+  setMySites(profile.sites)
 }
 
 // ---- SSO (DWS Hub, OIDC + PKCE) ----
@@ -242,6 +266,7 @@ export async function ssoComplete(code: string, state: string | null, verifierFr
   const profile = await me()
   setPermissions(profile.permissions ?? {})
   setCompany(profile.company)
+  setMySites(profile.sites)
 }
 
 // ---- role management ----
@@ -284,16 +309,18 @@ export function queryReport(key: string, body: {
   return request(`/reports/${key}/query`, { method: 'POST', body: JSON.stringify(body) })
 }
 
-export async function uploadFile(file: File, companyId?: number | null): Promise<any> {
+export async function uploadFile(file: File, companyId?: number | null, siteId?: number | null): Promise<any> {
   const fd = new FormData()
   fd.append('file', file)
   if (companyId != null) fd.append('companyId', String(companyId))
+  if (siteId != null) fd.append('siteId', String(siteId))
   return request('/ingestions/upload', { method: 'POST', body: fd })
 }
 
 // ---- companies (multi-tenant admin) ----
 export type Company = { id: number; name: string; active: boolean; hasLogo: boolean; userCount: number }
-export type PickCompany = { id: number; name: string }
+/** A company the user may upload for, with the sites of it they may upload for. */
+export type PickCompany = { id: number; name: string; sites: { id: number; name: string }[] }
 export const companies = (): Promise<Company[]> => request('/companies')
 export const createCompany = (body: { name: string; active: boolean; logoBase64?: string | null; logoContentType?: string | null }) =>
   request('/companies', { method: 'POST', body: JSON.stringify(body) })
@@ -341,28 +368,29 @@ export async function downloadTemplate(key: string): Promise<void> {
 // ---- admin (FR-A1/A3/A4) ----
 export type AdminUser = {
   id: number; email: string; fullName: string; role: string; status: string
-  allEntities: boolean; entityId: number | null; siteId: number | null
-  entityName?: string; siteName?: string; createdAt: string
+  allSites: boolean; siteIds: number[]; siteNames: string; createdAt: string
   companyIds: number[]; companyNames: string
 }
 export const adminUsers = (): Promise<{ users: AdminUser[]; roles: string[] }> => request('/admin/users')
 export const adminCreateUser = (u: {
-  email: string; fullName: string; role: string; allEntities: boolean
-  entityId: number | null; siteId: number | null; password: string; companyIds: number[]
+  email: string; fullName: string; role: string; allSites: boolean
+  siteIds: number[]; password: string; companyIds: number[]
 }) => request('/admin/users', { method: 'POST', body: JSON.stringify(u) })
 export const adminSetStatus = (id: number, status: 'active' | 'disabled') =>
   request(`/admin/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
 export const adminResetPassword = (id: number, password: string) =>
   request(`/admin/users/${id}/reset`, { method: 'POST', body: JSON.stringify({ password }) })
-export const setUserScope = (id: number, allEntities: boolean, entityId: number | null) =>
-  request(`/admin/users/${id}/scope`, { method: 'PUT', body: JSON.stringify({ allEntities, entityId }) })
+export const setUserSites = (id: number, allSites: boolean, siteIds: number[]) =>
+  request(`/admin/users/${id}/sites`, { method: 'PUT', body: JSON.stringify({ allSites, siteIds }) })
 export const adminMaster = () => request('/admin/master')
-export const adminAddEntity = (code: string, name: string, companyId: number) =>
-  request('/admin/entities', { method: 'POST', body: JSON.stringify({ code, name, companyId }) })
-export const adminAddSite = (entityId: number, name: string) =>
-  request('/admin/sites', { method: 'POST', body: JSON.stringify({ entityId, name }) })
-export const adminAddPermit = (entityId: number, siteId: number | null, permitNo: string) =>
-  request('/admin/tpb-permits', { method: 'POST', body: JSON.stringify({ entityId, siteId, permitNo }) })
+export const adminAddSite = (companyId: number, name: string) =>
+  request('/admin/sites', { method: 'POST', body: JSON.stringify({ companyId, name }) })
+/** Which reports a site sees (per page, an empty selection means every report on that page), and
+ *  per report which columns — a report left out uses its starter columns. */
+export const adminSetSiteReports = (siteId: number, keys: string[], columns: Record<string, string[]>) =>
+  request(`/admin/sites/${siteId}/reports`, { method: 'PUT', body: JSON.stringify({ keys, columns }) })
+export const adminAddPermit = (companyId: number, siteId: number | null, permitNo: string) =>
+  request('/admin/tpb-permits', { method: 'POST', body: JSON.stringify({ companyId, siteId, permitNo }) })
 
 // ---- audit trail (FR-A7) ----
 export type AuditEvent = {

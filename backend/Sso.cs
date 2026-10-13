@@ -245,11 +245,11 @@ public static class Sso
         {
             await using var con = await ds.OpenConnectionAsync();
             var user = await con.QueryFirstOrDefaultAsync(
-                "select id, email, full_name, role, all_entities, entity_id, site_id, status, sso_sub from auth.users where sso_sub = @sub",
+                "select id, email, full_name, role, all_entities, status, sso_sub from auth.users where sso_sub = @sub",
                 new { sub });
             if (user is null && !string.IsNullOrWhiteSpace(email))
                 user = await con.QueryFirstOrDefaultAsync(
-                    "select id, email, full_name, role, all_entities, entity_id, site_id, status, sso_sub from auth.users where lower(email) = lower(@e)",
+                    "select id, email, full_name, role, all_entities, status, sso_sub from auth.users where lower(email) = lower(@e)",
                     new { e = email });
 
             if (user is null)
@@ -261,7 +261,7 @@ public static class Sso
             }
             if ((string)user.status != "active")
             {
-                Audit.Log("auth.sso_denied", Auth.ScopeOf(user), "user", ((long)user.id).ToString(), "SSO sign-in for a disabled account",
+                Audit.Log("auth.sso_denied", (UserScope)await Sites.ScopeOf(con, user), "user", ((long)user.id).ToString(), "SSO sign-in for a disabled account",
                     new { sub, email }, ip);
                 return Results.Problem(statusCode: 403, title: "SSO-005", detail: "This account has been disabled.");
             }
@@ -270,9 +270,10 @@ public static class Sso
             if (user.sso_sub is null)
                 await con.ExecuteAsync("update auth.users set sso_sub = @sub where id = @id", new { sub, id = (long)user.id });
 
-            Audit.Log("auth.sso_login", Auth.ScopeOf(user), "user", ((long)user.id).ToString(),
+            UserScope scope = await Sites.ScopeOf(con, user);
+            Audit.Log("auth.sso_login", scope, "user", scope.UserId.ToString(),
                 "Signed in via DWS Hub", new { sub }, ip);
-            return Results.Ok(Auth.SessionResponse(cfg, user));
+            return Results.Ok(Auth.SessionResponse(cfg, scope));
         }
         catch (Npgsql.PostgresException pex) when (pex.SqlState == "42703")
         {

@@ -117,6 +117,11 @@ public static class Companies
             await con.ExecuteAsync(
                 "insert into auth.user_companies (user_id, company_id) select @userId, unnest(@ids::bigint[]) on conflict do nothing",
                 new { userId, ids = companyIds }, tx);
+        // A site belongs to a company: dropping the company drops the user's sites in it too.
+        await con.ExecuteAsync("""
+            delete from auth.user_sites us using master.sites s
+             where us.user_id = @userId and s.id = us.site_id and not (s.company_id = any(@ids))
+            """, new { userId, ids = companyIds ?? Array.Empty<long>() }, tx);
         await tx.CommitAsync();
         Sessions.Invalidate(userId);   // apply the new scope on the user's next request
         Audit.Log("admin.user.companies", scope, "user", userId.ToString(), "Updated company assignment", new { companyIds }, null);
@@ -136,13 +141,21 @@ public static class Companies
         return ((long)row.id, (string)row.name, uri);
     }
 
-    /// <summary>Companies a user may pick from when uploading (their own; Super Admin = all active).</summary>
-    public static async Task<List<dynamic>> Pickable(NpgsqlConnection con, UserScope scope)
+    /// <summary>
+    /// Companies a user may pick from when uploading (their own; Super Admin = all active), each
+    /// with the sites of it the user may upload for. A company without such a site is left out.
+    /// </summary>
+    public static async Task<List<object>> Pickable(NpgsqlConnection con, UserScope scope)
     {
         var sql = scope.AllCompanies
             ? "select id, name from master.companies where active order by name"
             : "select id, name from master.companies where active and id = any(@ids) order by name";
-        return (await con.QueryAsync(sql, new { ids = scope.CompanyIds })).ToList();
+        var sites = await Sites.Mine(con, scope);
+        return (await con.QueryAsync<(long id, string name)>(sql, new { ids = scope.CompanyIds }))
+            .Select(c => (c, sites: sites.Where(s => s.CompanyId == c.id).Select(s => new { id = s.Id, name = s.Name }).ToList()))
+            .Where(x => x.sites.Count > 0)
+            .Select(x => (object)new { x.c.id, x.c.name, x.sites })
+            .ToList();
     }
 
     /// <summary>Resolve and validate the company an upload should be tagged with, for this user.</summary>

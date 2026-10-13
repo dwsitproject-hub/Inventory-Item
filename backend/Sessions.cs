@@ -43,8 +43,7 @@ public static class Sessions
         {
             await using var con = await ds.OpenConnectionAsync();
             var row = await con.QuerySingleOrDefaultAsync("""
-                select id, email, full_name, role, status, all_entities, entity_id, site_id,
-                       tokens_valid_from
+                select id, email, full_name, role, status, all_entities, tokens_valid_from
                 from auth.users where id = @id
                 """, new { id });
             if (row is null)
@@ -57,14 +56,10 @@ public static class Sessions
                 _cache.TryRemove(id, out _);
                 return (Outcome.Disabled, null);
             }
-            // The companies this user may access. Super Admin spans all of them; everyone else is
-            // restricted to this list (empty list = no data, which is the safe default).
-            var companyIds = (await con.QueryAsync<long>(
-                "select company_id from auth.user_companies where user_id = @id", new { id })).ToArray();
+            // The companies and sites this user may access. Super Admin spans all of them; everyone
+            // else is restricted to these lists (empty list = no data, which is the safe default).
             e = new Entry(
-                new UserScope((long)row.id, (string)row.email, (string)row.full_name, (string)row.role,
-                              (bool)row.all_entities, (long?)row.entity_id, (long?)row.site_id,
-                              (string)row.role == Auth.SuperAdmin, companyIds),
+                await Sites.ScopeOf(con, row),
                 new DateTimeOffset((DateTime)row.tokens_valid_from, TimeSpan.Zero),
                 DateTime.UtcNow);
             _cache[id] = e;

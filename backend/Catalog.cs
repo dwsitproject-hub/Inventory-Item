@@ -8,7 +8,10 @@ public enum FieldType { Text, Number, Date }
 /// (PRD v1.2 App. D & E). <see cref="Label"/> is the customs-terminology name shown to users;
 /// when absent the verbatim name is displayed.
 /// </summary>
-public record Field(string Name, FieldType Type, string Group = "", string? Label = null)
+/// <para><see cref="OptIn"/> marks a column a site must switch on (Admin → Master Data → site →
+/// Reports → Columns): it is in the upload template and stored like any other, but a site's
+/// starter column set leaves it out.</para>
+public record Field(string Name, FieldType Type, string Group = "", string? Label = null, bool OptIn = false)
 {
     public string Display => Label ?? Name;
 }
@@ -326,6 +329,19 @@ public static class Catalog
         new("Insurance", FieldType.Number, "Nilai Barang", "Nilai Asuransi"),
     };
 
+    // ---------- Laporan BC 2.7 Out ----------
+    // The shared outbound layout plus "Dokumen Asal Barang": the origin customs document each line
+    // draws on, and how much of it was used. Opt-in per site. A file carrying these columns matches
+    // BC 2.7 Out outright; one without them still ties with BC 2.5 / 4.1 and is told apart by name.
+    public static readonly Field[] Bc27Out = BcOut.Concat(new Field[]
+    {
+        new("Dokumen Asal Barang / Tipe Dokumen", FieldType.Text, "Dokumen Asal Barang", OptIn: true),
+        new("Dokumen Asal Barang / No Daftar", FieldType.Text, "Dokumen Asal Barang", OptIn: true),
+        new("Dokumen Asal Barang / Tanggal Daftar", FieldType.Date, "Dokumen Asal Barang", OptIn: true),
+        new("Dokumen Asal Barang / Qty Pemakaian", FieldType.Number, "Dokumen Asal Barang", OptIn: true),
+        new("Dokumen Asal Barang / Satuan", FieldType.Text, "Dokumen Asal Barang", OptIn: true),
+    }).ToArray();
+
     public static readonly string[] Bc27InDefaults =
     {
         "Jenis Dok.", "Dok. Pabean / Nomor", "Dok. Pabean / Tanggal", "Pemasok/Pengirim",
@@ -343,6 +359,7 @@ public static class Catalog
         { "Dok. Pabean / Nomor", "Bukti Penerimaan / Nomor", "Dokumen / Nomor", "Pemasok/Pengirim", "Kode Barang", "Nama Barang", "HS Code" };
     private static readonly string[] BcOutSearch =
         { "Dok. Pabean / Nomor", "Bukti Pengeluaran / Nomor", "Dokumen / Nomor", "Penerima / Pembeli", "Kode Barang", "Nama Barang" };
+    private static readonly string[] Bc27OutSearch = BcOutSearch.Append("Dokumen Asal Barang / No Daftar").ToArray();
 
     /// <summary>
     /// Page = which screen hosts the report: "reports" (customs documents) or "movement".
@@ -397,7 +414,7 @@ public static class Catalog
         new("bc27-in", "Pemasukan Barang — BC 2.7", "BC27IN", Bc27In, Bc27InDefaults, Bc27InSearch,
             "reports", new[] { "BC 2.7", "27IN" }),
         // These three share one layout; the hint is the only thing that separates them.
-        new("bc27-out", "Pengeluaran Barang — BC 2.7", "BC27OUT", BcOut, BcOutDefaults, BcOutSearch,
+        new("bc27-out", "Pengeluaran Barang — BC 2.7", "BC27OUT", Bc27Out, BcOutDefaults, Bc27OutSearch,
             "reports", new[] { "BC 2.7", "27OUT" }),
         new("bc25-out", "Pengeluaran Barang — BC 2.5", "BC25", BcOut, BcOutDefaults, BcOutSearch,
             "reports", new[] { "BC 2.5", "BC25" }),

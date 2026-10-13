@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { can, clearSession, getCompany, getToken, getUser, hasPermissions, landingPath, me, setCompany, setPermissions } from './api'
+import { can, clearSession, getCompany, getMySites, getToken, getUser, hasPermissions, landingPath, me, setCompany, setMySites, setPermissions, setUserScope } from './api'
 import Bell from './components/Bell'
 import Login from './pages/Login'
 import SsoCallback from './pages/SsoCallback'
@@ -27,7 +27,7 @@ function Layout({ children }: { children: React.ReactNode }) {
       </div>
       <div className="top">
         <div className="scope">
-          Scope: <b>{user.allEntities ? 'All entities' : `Entity #${user.entityId}${user.siteId ? ' · Site #' + user.siteId : ''}`}</b>
+          Scope: <b>{user.allSites ? 'All sites' : (getMySites().map(s => s.name).join(', ') || 'No site assigned')}</b>
           {' '}· local Docker test
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
@@ -87,12 +87,12 @@ function Protected({ children, page }: { children: React.ReactNode; page?: strin
 export default function App() {
   // Permissions must be present before any page can be gated — a session created before
   // permissions existed (or any reload) would otherwise be treated as "no access".
-  const [ready, setReady] = useState(() => !getToken() || hasPermissions())
+  const [ready, setReady] = useState(() => !getToken() || (hasPermissions() && sessionStorage.getItem('bc.sites') !== null))
 
   useEffect(() => {
     if (ready) return
     me()
-      .then(p => { setPermissions(p.permissions ?? {}); setCompany(p.company) })
+      .then(p => { setPermissions(p.permissions ?? {}); setCompany(p.company); setMySites(p.sites); setUserScope(p.user) })
       .catch(() => { /* 401 already redirects to login; the API stays the real gate */ })
       .finally(() => setReady(true))
   }, [ready])

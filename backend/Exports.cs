@@ -13,9 +13,9 @@ public static class Exports
 {
     private const int MaxRows = 100_000;
 
-    public static async Task<IResult> Run(NpgsqlDataSource ds, string key, string format, QueryRequest req, UserScope scope, string? ip = null)
+    public static async Task<IResult> Run(NpgsqlDataSource ds, string key, string format, QueryRequest req, UserScope scope, string? ip = null, SiteReports.View? view = null)
     {
-        var (built, error) = Reports.Build(key, req, scope);
+        var (built, error) = Reports.Build(key, req, scope, view);
         if (error != null) return error;
         var b = built!;
         var byName = b.Report.Fields.ToDictionary(f => f.Name);
