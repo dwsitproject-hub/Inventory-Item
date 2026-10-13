@@ -131,7 +131,7 @@ public static class Audit
     public static async Task<IResult> Export(NpgsqlDataSource ds, UserScope scope, string? from, string? to,
                                              string? actor, string? action, string? search)
     {
-        if (await RequireViewer(scope, "edit") is { } err) return err;
+        if (await RequireViewer(scope, "export") is { } err) return err;
         var f = BuildFilters(scope, from, to, actor, action, search);
 
         await using var con = await ds.OpenConnectionAsync();

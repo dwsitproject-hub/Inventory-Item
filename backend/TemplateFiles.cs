@@ -128,6 +128,10 @@ public static class TemplateFiles
             info.Cell(hdr + 2 + report.Fields.Length + 2, 1).Value =
                 $"{string.Join(", ", optIn)} columns are optional — leave them blank if unused. " +
                 "They appear in the app only for sites that switch them on.";
+        if (report.Fields.Any(f => f.Repeats))
+            info.Cell(hdr + 2 + report.Fields.Length + 3, 1).Value =
+                "A line drawing on several origin documents: one row per document — repeat the other columns " +
+                "or leave them blank under the first row. These rows load as one line.";
         info.Columns(1, 6).AdjustToContents();
         foreach (var col in info.Columns(1, 6))
             if (col.Width > 52) col.Width = 52;

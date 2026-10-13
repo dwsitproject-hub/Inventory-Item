@@ -244,6 +244,11 @@ public static class Ingestion
             return new { status = "failed", message = ex.Message };
         }
 
+        // A line drawing on several origin documents arrives as one row per document: fold those
+        // rows into one line before anything is validated or stored.
+        if (Catalog.ByTemplate(template)?.Fields is { } tplFields && tplFields.Any(f => f.Repeats))
+            parsed = parsed with { Lines = MergeRepeating(parsed.Lines, tplFields) };
+
         var good = parsed.Lines.Where(l => l.Problems.Count == 0).ToList();
         var bad = parsed.Lines.Where(l => l.Problems.Count > 0).ToList();
 
@@ -505,6 +510,57 @@ public static class Ingestion
         string? K(string concept) => fields.FirstOrDefault(f => f.Label == concept || f.Name == concept)?.Name;
         var nopen = K("NoPen"); var po = K("No PO"); var kode = K("Kode Barang");
         return nopen is null || po is null || kode is null ? null : new UpsertKeys(nopen, po, kode, K("GR No"));
+    }
+
+    /// <summary>
+    /// Fold upload rows that describe one line drawing on several origin documents into that line.
+    /// A row carrying repeating values (<see cref="Field.Repeats"/>) joins an earlier line when
+    /// every other column is identical, or continues the row above when its other columns are all
+    /// blank (merged cells in Excel). Each repeating column becomes a list with one entry per
+    /// origin document, kept aligned across the columns (a blank is a null entry). Rows without
+    /// repeating values are never merged, so genuinely duplicated rows still load as they did.
+    /// A merged line carries every problem of its rows, so one bad row quarantines the whole line.
+    /// </summary>
+    public static List<ParsedLine> MergeRepeating(List<ParsedLine> lines, Field[] fields)
+    {
+        var repeating = fields.Where(f => f.Repeats).Select(f => f.Name).ToArray();
+        if (repeating.Length == 0) return lines;
+
+        var result = new List<ParsedLine>();
+        var byKey = new Dictionary<string, ParsedLine>();
+        ParsedLine? previous = null;
+
+        foreach (var line in lines)
+        {
+            var main = line.Data.Where(kv => !repeating.Contains(kv.Key)).OrderBy(kv => kv.Key, StringComparer.Ordinal).ToList();
+            if (!repeating.Any(line.Data.ContainsKey))
+            {
+                result.Add(line);                           // nothing to fold
+                previous = null;
+                continue;
+            }
+
+            ParsedLine target;
+            if (main.Count == 0 && previous is not null)
+                target = previous;                          // continuation row under merged cells
+            else
+            {
+                var key = JsonSerializer.Serialize(main);
+                if (!byKey.TryGetValue(key, out target!))
+                {
+                    var data = main.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    foreach (var n in repeating) data[n] = new List<object?>();
+                    target = new ParsedLine(line.RowNo, data, new List<string>());
+                    byKey[key] = target;
+                    result.Add(target);
+                }
+            }
+            target.Problems.AddRange(line.Problems.Select(p => $"row {line.RowNo}: {p}"));
+            foreach (var n in repeating)
+                ((List<object?>)target.Data[n]!).Add(line.Data.GetValueOrDefault(n));
+            previous = target;
+        }
+        return result;
     }
 
     /// <summary>A jsonb key as a safe SQL string literal (keys are Catalog constants, but escape anyway).</summary>

@@ -153,7 +153,7 @@ api.MapPost("/reports/{key}/export", async (string key, string? format, QueryReq
 {
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
-    if (await Permissions.Require(scope, page, "edit") is { } err) return err;
+    if (await Permissions.Require(scope, page, "export") is { } err) return err;
     var view = await SiteReports.For(scope);
     if (SiteReports.Require(view, key) is { } serr) return serr;
     return await Exports.Run(ds, key, format ?? "xlsx", req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);

@@ -206,7 +206,7 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
           )}
           <button className="btn o" onClick={saveNamed} title="Save current layout as a named view (FR-R12)">＋ View</button>
           <button className="btn o" onClick={() => setChooserOpen(v => !v)}>⚙ Columns</button>
-          {can(report.page, 'edit') ? (<>
+          {can(report.page, 'export') ? (<>
             <button className="btn o" disabled={exporting} onClick={() => doExport('xlsx')} title="Export honours visible columns, order and sort (FR-R13)">Excel</button>
             <button className="btn o" disabled={exporting} onClick={() => doExport('csv')}>CSV</button>
           </>) : (
@@ -315,9 +315,15 @@ export default function Grid({ report, filters }: { report: ReportMeta; filters:
                     </td>
                   )}
                   <td className="num">{offset + i + 1}</td>
-                  {cols.map(c => (
-                    <td key={c} className={fieldsByName.get(c)?.type === 'number' ? 'num' : ''}>{fmt(c, r[c])}</td>
-                  ))}
+                  {cols.map(c => {
+                    const v = r[c]
+                    const num = fieldsByName.get(c)?.type === 'number' ? 'num' : ''
+                    // A repeating column (one entry per origin document) stacks its entries in the
+                    // cell; a blank entry keeps its slot so the columns of one document line up.
+                    return Array.isArray(v)
+                      ? <td key={c} className={num + ' multi'}>{v.map((x, k) => <div key={k}>{fmt(c, x) || '—'}</div>)}</td>
+                      : <td key={c} className={num}>{fmt(c, v)}</td>
+                  })}
                 </tr>
               )
             })}

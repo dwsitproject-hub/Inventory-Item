@@ -138,7 +138,7 @@ public static class Auth
         {
             user = new { scope.Email, scope.FullName, scope.Role, scope.AllSites, siteIds = scope.SiteIds,
                          scope.AllCompanies, companyIds = scope.CompanyIds },
-            permissions = perms.ToDictionary(k => k.Key, v => new { v.Value.View, v.Value.Insert, v.Value.Edit, v.Value.Delete }),
+            permissions = perms.ToDictionary(k => k.Key, v => new { v.Value.View, v.Value.Insert, v.Value.Edit, v.Value.Delete, v.Value.Export }),
             sites,
             company = new { id = companyId, name = companyName, logo = companyLogo }
         });

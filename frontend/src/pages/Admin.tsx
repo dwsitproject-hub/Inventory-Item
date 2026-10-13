@@ -293,14 +293,14 @@ function RoleManagement() {
     .catch(e => setError(e.message))
   useEffect(() => { load() }, [])
 
-  function toggle(role: string, page: string, action: 'view' | 'insert' | 'edit' | 'delete') {
+  function toggle(role: string, page: string, action: 'view' | 'insert' | 'edit' | 'delete' | 'export') {
     setDraft(d => {
       const rows = d[role].map(r => {
         if (r.page !== page) return r
         const next = { ...r, [action]: !r[action] }
-        // insert/edit/delete imply view — a page you cannot open cannot be acted on
-        if ((action === 'insert' || action === 'edit' || action === 'delete') && next[action]) next.view = true
-        if (action === 'view' && !next.view) { next.insert = false; next.edit = false; next.delete = false }
+        // every action implies view — a page you cannot open cannot be acted on
+        if (action !== 'view' && next[action]) next.view = true
+        if (action === 'view' && !next.view) { next.insert = false; next.edit = false; next.delete = false; next.export = false }
         return next
       })
       return { ...d, [role]: rows }
@@ -361,12 +361,13 @@ function RoleManagement() {
                 <th style={{ width: 90 }}>Insert</th>
                 <th style={{ width: 90 }}>Edit</th>
                 <th style={{ width: 90 }}>Delete</th>
-                <th>What insert / edit / delete control</th>
+                <th style={{ width: 90 }}>Export</th>
+                <th>What insert / edit / delete / export control</th>
               </tr></thead>
               <tbody>
                 {data.pages.map(p => {
                   const row = draft[r.role]?.find(x => x.page === p.key)
-                    ?? { page: p.key, view: false, insert: false, edit: false, delete: false }
+                    ?? { page: p.key, view: false, insert: false, edit: false, delete: false, export: false }
                   const disabled = r.locked || !data.canEdit
                   return (
                     <tr key={p.key}>
@@ -385,8 +386,13 @@ function RoleManagement() {
                         ? <input type="checkbox" checked={row.delete} disabled={disabled}
                           onChange={() => toggle(r.role, p.key, 'delete')} />
                         : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
+                      <td>{p.hasExport
+                        ? <input type="checkbox" checked={row.export} disabled={disabled}
+                          onChange={() => toggle(r.role, p.key, 'export')} />
+                        : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                       <td style={{ color: 'var(--muted)', fontSize: 11.5, whiteSpace: 'normal' }}>
-                        {[p.insertMeans && `Insert: ${p.insertMeans}`, p.editMeans && `Edit: ${p.editMeans}`, p.deleteMeans && `Delete: ${p.deleteMeans}`]
+                        {[p.insertMeans && `Insert: ${p.insertMeans}`, p.editMeans && `Edit: ${p.editMeans}`,
+                          p.deleteMeans && `Delete: ${p.deleteMeans}`, p.exportMeans && `Export: ${p.exportMeans}`]
                           .filter(Boolean).join(' · ') || 'view only'}
                       </td>
                     </tr>
@@ -399,9 +405,10 @@ function RoleManagement() {
       ))}
       <div className="note">
         Permissions are enforced by the API, not just hidden in the UI — a revoked page returns 403
-        even if called directly. Ticking Insert, Edit or Delete automatically grants View, since a page you
+        even if called directly. Ticking Insert, Edit, Delete or Export automatically grants View, since a page you
         cannot open cannot be acted on. Delete permanently removes ingested report rows and is
-        off for every role except Super Admin by default. Every change is audited and alerts the administrators.
+        off for every role except Super Admin by default. Export controls the Excel / CSV download buttons —
+        untick it to let a role read the data on screen without taking a copy. Every change is audited and alerts the administrators.
       </div>
     </>
   )

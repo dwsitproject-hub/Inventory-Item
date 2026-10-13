@@ -68,6 +68,13 @@ public static class Db
                 throw new InvalidOperationException(
                     "The database schema is behind this build (Company → Site: auth.user_sites is missing). " +
                     "Run the API once with --migrate using an account that owns the tables.");
+            var hasExport = await check.ExecuteScalarAsync<bool>(
+                "select exists (select 1 from information_schema.columns " +
+                "where table_schema='auth' and table_name='role_permissions' and column_name='can_export')");
+            if (!hasExport)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (auth.role_permissions.can_export is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
             Console.WriteLine("[schema] verified (auto-migrate off — this account may not alter the schema)");
             return;
         }
@@ -161,6 +168,16 @@ public static class Db
             -- Permanently delete ingested report rows (FR-R14). Default false: only Super Admin
             -- has it until an administrator grants it in Role Management.
             alter table auth.role_permissions add column if not exists can_delete boolean not null default false;
+            -- Export (Excel / CSV download) is its own action. It used to ride on Edit for the export
+            -- pages, so when the column first appears every role keeps exactly the exports it had.
+            do $exp$
+            begin
+              if not exists (select 1 from information_schema.columns
+                             where table_schema = 'auth' and table_name = 'role_permissions' and column_name = 'can_export') then
+                alter table auth.role_permissions add column can_export boolean not null default false;
+                update auth.role_permissions set can_export = can_edit where page in ('reports', 'movement', 'audit');
+              end if;
+            end $exp$;
 
             create table if not exists ingest.ingestion_files (
                 id bigint generated always as identity primary key,

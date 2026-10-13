@@ -11,7 +11,10 @@ public enum FieldType { Text, Number, Date }
 /// <para><see cref="OptIn"/> marks a column a site must switch on (Admin → Master Data → site →
 /// Reports → Columns): it is in the upload template and stored like any other, but a site's
 /// starter column set leaves it out.</para>
-public record Field(string Name, FieldType Type, string Group = "", string? Label = null, bool OptIn = false)
+/// <para><see cref="Repeats"/> marks a column that may hold several values for one line — one per
+/// origin document. Upload rows that differ only in such columns are one line; the values are
+/// stored as a JSON array and shown stacked in one cell (see Ingestion.MergeRepeating).</para>
+public record Field(string Name, FieldType Type, string Group = "", string? Label = null, bool OptIn = false, bool Repeats = false)
 {
     public string Display => Label ?? Name;
 }
@@ -330,16 +333,18 @@ public static class Catalog
     };
 
     // ---------- Laporan BC 2.7 Out ----------
-    // The shared outbound layout plus "Dokumen Asal Barang": the origin customs document each line
-    // draws on, and how much of it was used. Opt-in per site. A file carrying these columns matches
-    // BC 2.7 Out outright; one without them still ties with BC 2.5 / 4.1 and is told apart by name.
+    // The shared outbound layout plus "Dokumen Asal Barang": the origin customs documents each line
+    // draws on, and how much of each was used. Opt-in per site. One line may draw on several origin
+    // documents — the upload then repeats the line once per document — so these columns repeat.
+    // A file carrying them matches BC 2.7 Out outright; one without them still ties with
+    // BC 2.5 / 4.1 and is told apart by name.
     public static readonly Field[] Bc27Out = BcOut.Concat(new Field[]
     {
-        new("Dokumen Asal Barang / Tipe Dokumen", FieldType.Text, "Dokumen Asal Barang", OptIn: true),
-        new("Dokumen Asal Barang / No Daftar", FieldType.Text, "Dokumen Asal Barang", OptIn: true),
-        new("Dokumen Asal Barang / Tanggal Daftar", FieldType.Date, "Dokumen Asal Barang", OptIn: true),
-        new("Dokumen Asal Barang / Qty Pemakaian", FieldType.Number, "Dokumen Asal Barang", OptIn: true),
-        new("Dokumen Asal Barang / Satuan", FieldType.Text, "Dokumen Asal Barang", OptIn: true),
+        new("Dokumen Asal Barang / Tipe Dokumen", FieldType.Text, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / No Daftar", FieldType.Text, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / Tanggal Daftar", FieldType.Date, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / Qty Pemakaian", FieldType.Number, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / Satuan", FieldType.Text, "Dokumen Asal Barang", OptIn: true, Repeats: true),
     }).ToArray();
 
     public static readonly string[] Bc27InDefaults =

@@ -27,10 +27,10 @@ export type User = {
   allSites: boolean; siteIds: number[]
 }
 
-export type PagePerm = { view: boolean; insert: boolean; edit: boolean; delete: boolean }
+export type PagePerm = { view: boolean; insert: boolean; edit: boolean; delete: boolean; export: boolean }
 export type PermissionMap = Record<string, PagePerm>
 
-const NO_PERM: PagePerm = { view: false, insert: false, edit: false, delete: false }
+const NO_PERM: PagePerm = { view: false, insert: false, edit: false, delete: false, export: false }
 
 export function getPermissions(): PermissionMap {
   const raw = sessionStorage.getItem('bc.perms')
@@ -270,9 +270,12 @@ export async function ssoComplete(code: string, state: string | null, verifierFr
 }
 
 // ---- role management ----
-export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean; delete: boolean }
+export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean; delete: boolean; export: boolean }
 export type RoleMatrix = {
-  pages: { key: string; title: string; hasInsert: boolean; hasEdit: boolean; hasDelete: boolean; insertMeans: string; editMeans: string; deleteMeans: string }[]
+  pages: {
+    key: string; title: string; hasInsert: boolean; hasEdit: boolean; hasDelete: boolean; hasExport: boolean
+    insertMeans: string; editMeans: string; deleteMeans: string; exportMeans: string
+  }[]
   roles: { role: string; locked: boolean; pages: RolePermRow[] }[]
   canEdit: boolean
 }

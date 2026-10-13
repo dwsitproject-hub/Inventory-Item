@@ -144,9 +144,31 @@ public static class Reports
         return (new BuiltQuery(report, where.ToString(), p, order, columns), null);
     }
 
+    /// <summary>
+    /// The SELECT expression for a field. A repeating field projects its JSON array as text (a
+    /// scalar stored before the field repeated is wrapped as a one-entry array); call
+    /// <see cref="Value"/> on what comes back. Every other field projects like <see cref="Expr"/>.
+    /// </summary>
+    public static string Proj(Field fld)
+    {
+        if (!fld.Repeats) return Expr(fld);
+        var j = $"l.data->'{Sql(fld.Name)}'";
+        return $"(case when {j} is null or jsonb_typeof({j}) = 'null' then null " +
+               $"when jsonb_typeof({j}) = 'array' then {j} else jsonb_build_array({j}) end)::text";
+    }
+
+    /// <summary>A projected cell as it leaves the API: a repeating field becomes a real JSON array.</summary>
+    public static object? Value(Field fld, object? raw) =>
+        fld.Repeats && raw is string json ? System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json) : raw;
+
+    /// <summary>
+    /// The sort (and typed) expression for a field. A repeating field sorts by its first entry.
+    /// </summary>
     public static string Expr(Field fld)
     {
-        var col = $"l.data->>'{Sql(fld.Name)}'";
+        var col = fld.Repeats
+            ? $"coalesce(l.data->'{Sql(fld.Name)}'->>0, l.data->>'{Sql(fld.Name)}')"
+            : $"l.data->>'{Sql(fld.Name)}'";
         // Guard the cast so ONE malformed cell can't 500 the whole report. A "Number"/"Date" column
         // that holds a value which will not cast (e.g. a dash, text, or a stray symbol that slipped
         // through ingestion) projects and sorts as NULL instead of throwing "invalid input syntax".
@@ -167,7 +189,7 @@ public static class Reports
 
         var size = Math.Clamp(req.Page?.Size ?? 25, 1, 200);
         var offset = Math.Max(req.Page?.Offset ?? 0, 0);
-        var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Expr(byName[c])} as c{i}"));
+        var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Proj(byName[c])} as c{i}"));
 
         // The line id travels with each row so the grid can offer per-row delete (FR-R14). It is
         // an internal key, returned under a reserved name the column projection can never collide with.
@@ -193,7 +215,7 @@ public static class Reports
         {
             var o = new Dictionary<string, object?>();
             o["__id"] = r["__id"];
-            for (int i = 0; i < b.Columns.Length; i++) o[b.Columns[i]] = r[$"c{i}"];
+            for (int i = 0; i < b.Columns.Length; i++) o[b.Columns[i]] = Value(byName[b.Columns[i]], r[$"c{i}"]);
             return o;
         });
 

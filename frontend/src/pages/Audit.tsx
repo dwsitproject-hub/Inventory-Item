@@ -80,7 +80,7 @@ export default function Audit() {
             {loading ? <span><span className="spin" />loading…</span>
               : <>Showing <b>{fmtInt(total === 0 ? 0 : offset + 1)}–{fmtInt(Math.min(offset + size, total))}</b> of <b>{fmtInt(total)}</b> events · newest first · click a row for detail</>}
           </div>
-          {can('audit', 'edit') && (
+          {can('audit', 'export') && (
             <button className="btn o" onClick={() => auditExport(filters).catch(e => setError(e.message))}>
               Export CSV
             </button>
