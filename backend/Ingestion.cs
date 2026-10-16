@@ -172,14 +172,23 @@ public static class Ingestion
     private static string First(string line) => line.Split('\t')[0].Trim();
 
     // ---------- loader: staging-free MVP upsert, idempotent per file hash (FR-I6) ----------
-    public static async Task<object> Load(NpgsqlDataSource ds, string fileName, byte[] bytes, string source, string? uploadedBy, UserScope? scope = null, long? companyId = null)
+    public static async Task<object> Load(NpgsqlDataSource ds, string fileName, byte[] bytes, string source, string? uploadedBy,
+                                          UserScope? scope = null, long? companyId = null, long? siteId = null)
     {
         var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
         await using var con = await ds.OpenConnectionAsync();
 
-        // Which company this upload belongs to (multi-tenant). The endpoint validates it against
-        // the uploader's scope; sample auto-ingest passes none, so fall back to the first company.
+        // Which company and site this upload belongs to. The endpoint validates both against the
+        // uploader's scope; sample auto-ingest passes none, so fall back to the first company and
+        // its first site (creating one named after the company if it has none yet).
         long companyForRows = companyId ?? await con.ExecuteScalarAsync<long>("select min(id) from master.companies");
+        long siteForRows = siteId
+            ?? await con.ExecuteScalarAsync<long?>("select min(id) from master.sites where company_id = @c", new { c = companyForRows })
+            ?? await con.ExecuteScalarAsync<long>("""
+                insert into master.sites (company_id, name)
+                select id, name from master.companies where id = @c
+                on conflict (company_id, name) do update set name = excluded.name returning id
+                """, new { c = companyForRows });
 
         var dup = await con.ExecuteScalarAsync<long?>(
             "select id from ingest.ingestion_files where file_hash = @hash", new { hash });
@@ -226,14 +235,19 @@ public static class Ingestion
         catch (Exception ex)
         {
             await con.ExecuteAsync("""
-                insert into ingest.ingestion_files (file_name, file_hash, file_size, source, template, status, error, uploaded_by, company_id)
-                values (@fileName, @hash, @size, @source, @template, 'failed', @err, @uploadedBy, @companyForRows)
-                """, new { fileName, hash, size = (long)bytes.Length, source, template, err = ex.Message, uploadedBy, companyForRows });
+                insert into ingest.ingestion_files (file_name, file_hash, file_size, source, template, status, error, uploaded_by, company_id, site_id)
+                values (@fileName, @hash, @size, @source, @template, 'failed', @err, @uploadedBy, @companyForRows, @siteForRows)
+                """, new { fileName, hash, size = (long)bytes.Length, source, template, err = ex.Message, uploadedBy, companyForRows, siteForRows });
             await Notifications.Emit(con, "error", $"Ingestion failed — {fileName}", ex.Message);
             Audit.Log("ingest.failed", null, "file", fileName, $"Parse failed: {ex.Message}",
                 new { source, template, hash }, actorEmailOverride: uploadedBy);
             return new { status = "failed", message = ex.Message };
         }
+
+        // A line drawing on several origin documents arrives as one row per document: fold those
+        // rows into one line before anything is validated or stored.
+        if (Catalog.ByTemplate(template)?.Fields is { } tplFields && tplFields.Any(f => f.Repeats))
+            parsed = parsed with { Lines = MergeRepeating(parsed.Lines, tplFields) };
 
         var good = parsed.Lines.Where(l => l.Problems.Count == 0).ToList();
         var bad = parsed.Lines.Where(l => l.Problems.Count > 0).ToList();
@@ -242,8 +256,8 @@ public static class Ingestion
 
         var fileId = await con.ExecuteScalarAsync<long>("""
             insert into ingest.ingestion_files
-                (file_name, file_hash, file_size, source, template, status, rows_total, rows_loaded, rows_quarantined, header_meta, footer_totals, uploaded_by, company_id)
-            values (@fileName, @hash, @size, @source, @template, @status, @total, @loaded, @quarantined, @meta::jsonb, @footer::jsonb, @uploadedBy, @companyForRows)
+                (file_name, file_hash, file_size, source, template, status, rows_total, rows_loaded, rows_quarantined, header_meta, footer_totals, uploaded_by, company_id, site_id)
+            values (@fileName, @hash, @size, @source, @template, @status, @total, @loaded, @quarantined, @meta::jsonb, @footer::jsonb, @uploadedBy, @companyForRows, @siteForRows)
             returning id
             """, new
         {
@@ -252,23 +266,11 @@ public static class Ingestion
             total = parsed.Lines.Count, loaded = good.Count, quarantined = bad.Count,
             meta = JsonSerializer.Serialize(parsed.HeaderMeta),
             footer = JsonSerializer.Serialize(parsed.FooterTotals),
-            uploadedBy, companyForRows
+            uploadedBy, companyForRows, siteForRows
         }, tx);
 
-        // Tag rows with the UPLOADER's entity so a scope-locked user sees their own upload
-        // (FR-R2a; Reports filters l.entity_id = the viewer's entity). A scope-locked uploader owns
-        // the data for their assigned entity; an all-entities uploader (admin/Super Admin) or the
-        // sample auto-ingest has no single entity, so fall back to the first seeded entity. Before
-        // this, every upload was hard-coded to the first entity, so a user assigned to any other
-        // entity saw zero rows from their own upload. Site/TPB are still resolved from the rows.
-        long entityId = scope is { AllEntities: false, EntityId: long uploaderEntity }
-            ? uploaderEntity
-            // All-entities / sample uploads: keep the entity inside the upload's company (Company
-            // owns Entity), falling back to the first entity overall if the company has none yet.
-            : await con.ExecuteScalarAsync<long>(
-                "select coalesce((select min(id) from master.entities where company_id = @c), (select min(id) from master.entities))",
-                new { c = companyForRows }, tx);
-        var siteCache = new Dictionary<string, long>();
+        // Every row of the file is tagged with the site chosen at upload (FR-R2a; Reports shows a
+        // user the rows of their sites). TPB permits are still registered from the rows.
         var tpbCache = new Dictionary<string, long>();
         var docCache = new Dictionary<string, long>();
 
@@ -300,9 +302,10 @@ public static class Ingestion
                        coalesce(data->>{Lit(uk.KodeBarang)}, '') as k,
                        {grSel}                                   as g
                 from bc.document_lines
-                where company_id = @c and template = @t
+                where company_id = @c and site_id = @s and template = @t
                 """;
-            foreach (var r in await con.QueryAsync(idxSql, new { c = companyForRows, t = template }, tx))
+            // Per site: the same document line uploaded for two sites is two lines, not one.
+            foreach (var r in await con.QueryAsync(idxSql, new { c = companyForRows, s = siteForRows, t = template }, tx))
             {
                 var key = IdxKey((string)r.n, (string)r.p, (string)r.k);
                 if (!lineIndex.TryGetValue(key, out var lst)) lineIndex[key] = lst = new List<LineRef>();
@@ -313,7 +316,7 @@ public static class Ingestion
 
         foreach (var line in good)
         {
-            string aju, docNo, docType; string? docDateIso; long? siteId = null, tpbId = null;
+            string aju, docNo, docType; string? docDateIso; long? tpbId = null;
             if (template == "BC23")
             {
                 aju = Str(line, "No.Pengajuan PIB");
@@ -345,20 +348,12 @@ public static class Ingestion
                 docType = Str(line, "Type");
                 docDateIso = StrOrNull(line, "Document BC / Date");
 
-                var siteName = Str(line, "Location");
-                if (siteName.Length > 0 && !siteCache.TryGetValue(siteName, out _))
-                    siteCache[siteName] = await con.ExecuteScalarAsync<long>("""
-                        insert into master.sites (entity_id, name) values (@e, @n)
-                        on conflict (entity_id, name) do update set name = excluded.name returning id
-                        """, new { e = entityId, n = siteName }, tx);
-                if (siteName.Length > 0) siteId = siteCache[siteName];
-
                 var permit = Str(line, "TPB No.");
                 if (permit.Length > 0 && !tpbCache.TryGetValue(permit, out _))
                     tpbCache[permit] = await con.ExecuteScalarAsync<long>("""
-                        insert into master.tpb_permits (entity_id, site_id, permit_no) values (@e, @s, @p)
+                        insert into master.tpb_permits (company_id, site_id, permit_no) values (@c, @s, @p)
                         on conflict (permit_no) do update set permit_no = excluded.permit_no returning id
-                        """, new { e = entityId, s = siteId, p = permit }, tx);
+                        """, new { c = companyForRows, s = siteForRows, p = permit }, tx);
                 if (permit.Length > 0) tpbId = tpbCache[permit];
             }
 
@@ -366,13 +361,13 @@ public static class Ingestion
             if (!docCache.TryGetValue(docKey, out var docId))
             {
                 docId = await con.ExecuteScalarAsync<long>("""
-                    insert into bc.documents (template, doc_type, aju_number, doc_number, doc_date, entity_id, site_id, tpb_id, supplier_name, ingestion_file_id, company_id)
-                    values (@template, @docType, @aju, @docNo, @docDate::date, @entityId, @siteId, @tpbId, @supplier, @fileId, @companyForRows)
+                    insert into bc.documents (template, doc_type, aju_number, doc_number, doc_date, site_id, tpb_id, supplier_name, ingestion_file_id, company_id)
+                    values (@template, @docType, @aju, @docNo, @docDate::date, @siteId, @tpbId, @supplier, @fileId, @companyForRows)
                     on conflict (template, aju_number, doc_number) do update set doc_type = excluded.doc_type
                     returning id
                     """, new
                 {
-                    template, docType, aju, docNo, docDate = docDateIso, entityId, siteId, tpbId, companyForRows,
+                    template, docType, aju, docNo, docDate = docDateIso, siteId = siteForRows, tpbId, companyForRows,
                     supplier = template switch
                     {
                         "BC23" => StrOrNull(line, "Supplier Name"),
@@ -420,7 +415,7 @@ public static class Ingestion
                 up.Parameters.AddWithValue("doc", docId);
                 up.Parameters.AddWithValue("docType", (object?)docType ?? DBNull.Value);
                 up.Parameters.AddWithValue("docDate", (object?)docDateIso ?? DBNull.Value);
-                up.Parameters.AddWithValue("siteId", (object?)siteId ?? DBNull.Value);
+                up.Parameters.AddWithValue("siteId", siteForRows);
                 up.Parameters.AddWithValue("tpbId", (object?)tpbId ?? DBNull.Value);
                 up.Parameters.Add(new NpgsqlParameter("data", NpgsqlDbType.Jsonb) { Value = dataJson });
                 up.Parameters.AddWithValue("fileId", fileId);
@@ -433,8 +428,8 @@ public static class Ingestion
             else
             {
                 var cmd = new NpgsqlCommand("""
-                    insert into bc.document_lines (document_id, template, doc_type, doc_date, entity_id, site_id, tpb_id, line_no, data, ingestion_file_id, company_id)
-                    values (@doc, @template, @docType, @docDate::date, @entityId, @siteId, @tpbId,
+                    insert into bc.document_lines (document_id, template, doc_type, doc_date, site_id, tpb_id, line_no, data, ingestion_file_id, company_id)
+                    values (@doc, @template, @docType, @docDate::date, @siteId, @tpbId,
                             coalesce((select max(line_no) from bc.document_lines where document_id = @doc), 0) + 1,
                             @data, @fileId, @companyForRows)
                     returning id
@@ -443,8 +438,7 @@ public static class Ingestion
                 cmd.Parameters.AddWithValue("template", template);
                 cmd.Parameters.AddWithValue("docType", (object?)docType ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("docDate", (object?)docDateIso ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("entityId", entityId);
-                cmd.Parameters.AddWithValue("siteId", (object?)siteId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("siteId", siteForRows);
                 cmd.Parameters.AddWithValue("tpbId", (object?)tpbId ?? DBNull.Value);
                 cmd.Parameters.Add(new NpgsqlParameter("data", NpgsqlDbType.Jsonb) { Value = dataJson });
                 cmd.Parameters.AddWithValue("fileId", fileId);
@@ -516,6 +510,57 @@ public static class Ingestion
         string? K(string concept) => fields.FirstOrDefault(f => f.Label == concept || f.Name == concept)?.Name;
         var nopen = K("NoPen"); var po = K("No PO"); var kode = K("Kode Barang");
         return nopen is null || po is null || kode is null ? null : new UpsertKeys(nopen, po, kode, K("GR No"));
+    }
+
+    /// <summary>
+    /// Fold upload rows that describe one line drawing on several origin documents into that line.
+    /// A row carrying repeating values (<see cref="Field.Repeats"/>) joins an earlier line when
+    /// every other column is identical, or continues the row above when its other columns are all
+    /// blank (merged cells in Excel). Each repeating column becomes a list with one entry per
+    /// origin document, kept aligned across the columns (a blank is a null entry). Rows without
+    /// repeating values are never merged, so genuinely duplicated rows still load as they did.
+    /// A merged line carries every problem of its rows, so one bad row quarantines the whole line.
+    /// </summary>
+    public static List<ParsedLine> MergeRepeating(List<ParsedLine> lines, Field[] fields)
+    {
+        var repeating = fields.Where(f => f.Repeats).Select(f => f.Name).ToArray();
+        if (repeating.Length == 0) return lines;
+
+        var result = new List<ParsedLine>();
+        var byKey = new Dictionary<string, ParsedLine>();
+        ParsedLine? previous = null;
+
+        foreach (var line in lines)
+        {
+            var main = line.Data.Where(kv => !repeating.Contains(kv.Key)).OrderBy(kv => kv.Key, StringComparer.Ordinal).ToList();
+            if (!repeating.Any(line.Data.ContainsKey))
+            {
+                result.Add(line);                           // nothing to fold
+                previous = null;
+                continue;
+            }
+
+            ParsedLine target;
+            if (main.Count == 0 && previous is not null)
+                target = previous;                          // continuation row under merged cells
+            else
+            {
+                var key = JsonSerializer.Serialize(main);
+                if (!byKey.TryGetValue(key, out target!))
+                {
+                    var data = main.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    foreach (var n in repeating) data[n] = new List<object?>();
+                    target = new ParsedLine(line.RowNo, data, new List<string>());
+                    byKey[key] = target;
+                    result.Add(target);
+                }
+            }
+            target.Problems.AddRange(line.Problems.Select(p => $"row {line.RowNo}: {p}"));
+            foreach (var n in repeating)
+                ((List<object?>)target.Data[n]!).Add(line.Data.GetValueOrDefault(n));
+            previous = target;
+        }
+        return result;
     }
 
     /// <summary>A jsonb key as a safe SQL string literal (keys are Catalog constants, but escape anyway).</summary>

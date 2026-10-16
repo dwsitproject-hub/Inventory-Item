@@ -52,6 +52,29 @@ public static class Db
                 throw new InvalidOperationException(
                     "The database schema is behind this build (master.entities.company_id is missing). " +
                     "Run the API once with --migrate using an account that owns the tables.");
+            // Per-site report lists (Admin → Master Data). Without the table the report catalog
+            // and every report query 500, so refuse loudly instead.
+            var hasSiteReports = await check.ExecuteScalarAsync<bool>(
+                "select to_regclass('master.site_reports') is not null and to_regclass('master.site_report_columns') is not null");
+            if (!hasSiteReports)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (master.site_reports / site_report_columns is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
+            // Company → Site: without user_sites / sites.company_id every sign-in and report fails.
+            var hasSites = await check.ExecuteScalarAsync<bool>(
+                "select to_regclass('auth.user_sites') is not null and exists (select 1 from information_schema.columns " +
+                "where table_schema='master' and table_name='sites' and column_name='company_id')");
+            if (!hasSites)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (Company → Site: auth.user_sites is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
+            var hasExport = await check.ExecuteScalarAsync<bool>(
+                "select exists (select 1 from information_schema.columns " +
+                "where table_schema='auth' and table_name='role_permissions' and column_name='can_export')");
+            if (!hasExport)
+                throw new InvalidOperationException(
+                    "The database schema is behind this build (auth.role_permissions.can_export is missing). " +
+                    "Run the API once with --migrate using an account that owns the tables.");
             Console.WriteLine("[schema] verified (auto-migrate off — this account may not alter the schema)");
             return;
         }
@@ -73,6 +96,21 @@ public static class Db
                 entity_id bigint not null references master.entities(id),
                 name text not null,
                 unique (entity_id, name)
+            );
+            -- Which reports a site sees on Reports / Inventory Movement. Per page, no rows means
+            -- every report on that page (see SiteReports).
+            create table if not exists master.site_reports (
+                site_id bigint not null references master.sites(id) on delete cascade,
+                report_key text not null,
+                primary key (site_id, report_key)
+            );
+            -- Which columns of a report a site sees. No row means the report's starter set (every
+            -- column that is not opt-in), so only customised reports are stored.
+            create table if not exists master.site_report_columns (
+                site_id bigint not null references master.sites(id) on delete cascade,
+                report_key text not null,
+                columns text[] not null,
+                primary key (site_id, report_key)
             );
             create table if not exists master.tpb_permits (
                 id bigint generated always as identity primary key,
@@ -130,6 +168,16 @@ public static class Db
             -- Permanently delete ingested report rows (FR-R14). Default false: only Super Admin
             -- has it until an administrator grants it in Role Management.
             alter table auth.role_permissions add column if not exists can_delete boolean not null default false;
+            -- Export (Excel / CSV download) is its own action. It used to ride on Edit for the export
+            -- pages, so when the column first appears every role keeps exactly the exports it had.
+            do $exp$
+            begin
+              if not exists (select 1 from information_schema.columns
+                             where table_schema = 'auth' and table_name = 'role_permissions' and column_name = 'can_export') then
+                alter table auth.role_permissions add column can_export boolean not null default false;
+                update auth.role_permissions set can_export = can_edit where page in ('reports', 'movement', 'audit');
+              end if;
+            end $exp$;
 
             create table if not exists ingest.ingestion_files (
                 id bigint generated always as identity primary key,
@@ -303,6 +351,82 @@ public static class Db
                 where u.role <> 'Super Admin'
                   and not exists (select 1 from auth.user_companies uc where uc.user_id = u.id)
                 on conflict do nothing;
+
+            -- ---- Company → Site (the Entity layer is retired) -----------------------------------
+            -- A site now belongs straight to a company and is what scopes data rows; a user is
+            -- linked to any number of sites (auth.user_sites) or to all sites of their companies
+            -- (auth.users.all_entities, kept under its old name, now means "all sites"). The entity
+            -- columns stay for history but are no longer written. Every step below is idempotent.
+            alter table master.sites add column if not exists company_id bigint references master.companies(id);
+            alter table master.sites alter column entity_id drop not null;
+            update master.sites s set company_id = e.company_id
+              from master.entities e where e.id = s.entity_id and s.company_id is null;
+            -- Two entities of one company may each have had a site of the same name: keep them
+            -- apart by suffixing the entity code before names become unique per company.
+            update master.sites s set name = s.name || ' (' || e.code || ')'
+              from master.entities e
+             where e.id = s.entity_id
+               and exists (select 1 from master.sites o
+                           where o.company_id = s.company_id and o.name = s.name and o.id < s.id);
+            create unique index if not exists ux_sites_company_name on master.sites (company_id, name);
+
+            alter table master.tpb_permits add column if not exists company_id bigint references master.companies(id);
+            alter table master.tpb_permits alter column entity_id drop not null;
+            update master.tpb_permits t set company_id = coalesce(
+                (select s.company_id from master.sites s where s.id = t.site_id),
+                (select e.company_id from master.entities e where e.id = t.entity_id))
+             where t.company_id is null;
+
+            alter table bc.documents      alter column entity_id drop not null;
+            alter table bc.document_lines alter column entity_id drop not null;
+            create index if not exists ix_lines_scope_site on bc.document_lines (template, site_id, doc_date desc, id);
+            alter table ingest.ingestion_files add column if not exists site_id bigint references master.sites(id);
+
+            create table if not exists auth.user_sites (
+                user_id bigint not null references auth.users(id) on delete cascade,
+                site_id bigint not null references master.sites(id) on delete cascade,
+                primary key (user_id, site_id)
+            );
+            -- Sites the actor was linked to (null = all sites), so a site-scoped admin's audit view
+            -- shows their own sites' activity. Adding a column does not touch existing events.
+            alter table audit.audit_events add column if not exists actor_site_ids bigint[];
+
+            -- Move rows that only know their entity onto a site: the entity's only site, or, when
+            -- it has none or several, a site named after the entity under the entity's company.
+            do $mig$
+            declare e record; target bigint;
+            begin
+              for e in select en.id, en.name, en.company_id from master.entities en
+                        where exists (select 1 from bc.document_lines l where l.entity_id = en.id and l.site_id is null)
+                           or exists (select 1 from bc.documents d where d.entity_id = en.id and d.site_id is null)
+              loop
+                select case when count(*) = 1 then min(id) end into target from master.sites where entity_id = e.id;
+                if target is null then
+                  select id into target from master.sites where company_id = e.company_id and name = e.name;
+                end if;
+                if target is null then
+                  insert into master.sites (entity_id, company_id, name) values (e.id, e.company_id, e.name)
+                  returning id into target;
+                end if;
+                update bc.document_lines set site_id = target where entity_id = e.id and site_id is null;
+                update bc.documents      set site_id = target where entity_id = e.id and site_id is null;
+              end loop;
+            end $mig$;
+            update ingest.ingestion_files f
+               set site_id = (select min(l.site_id) from bc.document_lines l where l.ingestion_file_id = f.id)
+             where f.site_id is null;
+
+            -- Users scoped to an entity get its sites (or just their own site, if they had one).
+            -- Clearing entity_id/site_id afterwards marks the user as migrated, so this never
+            -- re-adds a site an administrator later removed.
+            insert into auth.user_sites (user_id, site_id)
+                select u.id, s.id from auth.users u join master.sites s
+                  on (u.site_id is not null and s.id = u.site_id)
+                  or (u.site_id is null and s.entity_id = u.entity_id)
+                 where not u.all_entities and u.entity_id is not null
+                on conflict do nothing;
+            update auth.users set entity_id = null, site_id = null
+             where entity_id is not null or site_id is not null;
             """);
     }
 
@@ -365,20 +489,20 @@ public static class Db
         if (string.IsNullOrWhiteSpace(adminPw)) adminPw = "Admin123!";
         if (string.IsNullOrWhiteSpace(sitePw)) sitePw = "Bontang123!";
 
-        var entityId = await con.ExecuteScalarAsync<long>("""
-            insert into master.entities (code, name) values ('EUP', 'PT Energi Unggul Persada')
-            on conflict (code) do update set name = excluded.name
-            returning id
-            """);
-        var siteId = await con.ExecuteScalarAsync<long>(
-            "insert into master.sites (entity_id, name) values (@e, 'BONTANG') on conflict do nothing returning id",
-            new { e = entityId });
+        // The first company and its first site; the site user is linked to both. The Super Admin
+        // spans all companies and sites and needs no assignment.
+        var companyId = await con.ExecuteScalarAsync<long>(
+            "insert into master.companies (name) values ('PT SPC') on conflict (name) do update set name = excluded.name returning id");
+        var siteId = await con.ExecuteScalarAsync<long>("""
+            insert into master.sites (company_id, name) values (@c, 'BONTANG')
+            on conflict (company_id, name) do update set name = excluded.name returning id
+            """, new { c = companyId });
 
         // password hashing: BCrypt work factor 11 — local testing accounts
         await con.ExecuteAsync("""
-            insert into auth.users (email, full_name, role, password_hash, all_entities, entity_id, site_id)
-            values (@a, 'Jerry Pratama', 'Super Admin', @ph1, true, null, null),
-                   (@b, 'Aziz Wijonarko', 'Site BC User', @ph2, false, @e, @s)
+            insert into auth.users (email, full_name, role, password_hash, all_entities)
+            values (@a, 'Jerry Pratama', 'Super Admin', @ph1, true),
+                   (@b, 'Aziz Wijonarko', 'Site BC User', @ph2, false)
             """,
             new
             {
@@ -386,19 +510,15 @@ public static class Db
                 b = "bc.bontang@energi-up.com",
                 ph1 = BCrypt.Net.BCrypt.HashPassword(adminPw, 11),
                 ph2 = BCrypt.Net.BCrypt.HashPassword(sitePw, 11),
-                e = entityId,
-                s = siteId
             });
-        // Seed the first company and put the (non-Super-Admin) site user under it. The Super Admin
-        // spans all companies and needs no assignment.
-        var companyId = await con.ExecuteScalarAsync<long>(
-            "insert into master.companies (name) values ('PT SPC') on conflict (name) do update set name = excluded.name returning id");
         await con.ExecuteAsync("""
             insert into auth.user_companies (user_id, company_id)
             select id, @c from auth.users where role <> 'Super Admin'
-            on conflict do nothing
-            """, new { c = companyId });
-        await con.ExecuteAsync("update master.entities set company_id = @c where company_id is null", new { c = companyId });
+            on conflict do nothing;
+            insert into auth.user_sites (user_id, site_id)
+            select id, @s from auth.users where role <> 'Super Admin'
+            on conflict do nothing;
+            """, new { c = companyId, s = siteId });
 
         var custom = cfg?["Seed:AdminPassword"] is { Length: > 0 };
         Console.WriteLine("[seed] master data + 2 users created (admin@energi-up.com, bc.bontang@energi-up.com) — "

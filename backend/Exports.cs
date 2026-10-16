@@ -13,14 +13,14 @@ public static class Exports
 {
     private const int MaxRows = 100_000;
 
-    public static async Task<IResult> Run(NpgsqlDataSource ds, string key, string format, QueryRequest req, UserScope scope, string? ip = null)
+    public static async Task<IResult> Run(NpgsqlDataSource ds, string key, string format, QueryRequest req, UserScope scope, string? ip = null, SiteReports.View? view = null)
     {
-        var (built, error) = Reports.Build(key, req, scope);
+        var (built, error) = Reports.Build(key, req, scope, view);
         if (error != null) return error;
         var b = built!;
         var byName = b.Report.Fields.ToDictionary(f => f.Name);
 
-        var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Reports.Expr(byName[c])} as c{i}"));
+        var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Reports.Proj(byName[c])} as c{i}"));
         var sql = $"""
             select {proj}
             from bc.document_lines l
@@ -45,7 +45,8 @@ public static class Exports
             var sb = new StringBuilder();
             sb.AppendLine(string.Join(",", b.Columns.Select(c => Quote(byName[c].Display))));
             foreach (var r in raw)
-                sb.AppendLine(string.Join(",", b.Columns.Select((c, i) => Quote(Cell(r[$"c{i}"])))));
+                sb.AppendLine(string.Join(",", b.Columns.Select((c, i) =>
+                    Quote(byName[c].Repeats ? Joined(r[$"c{i}"], byName[c], "; ") : Cell(r[$"c{i}"])))));
             var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
             return Results.File(bytes, "text/csv", baseName + ".csv");
         }
@@ -70,6 +71,14 @@ public static class Exports
                     var cell = ws.Cell(rIdx + 2, c + 1);
                     var v = r[$"c{c}"];
                     var f = byName[b.Columns[c]];
+                    if (f.Repeats)
+                    {
+                        // One origin document per line inside the cell, as on screen.
+                        cell.SetValue(Joined(v, f, "\n"));
+                        cell.Style.NumberFormat.Format = "@";
+                        cell.Style.Alignment.WrapText = true;
+                        continue;
+                    }
                     switch (v)
                     {
                         case null: break;
@@ -100,6 +109,21 @@ public static class Exports
         DateTime dt => dt.ToString("yyyy-MM-dd"),
         _ => v.ToString() ?? ""
     };
+
+    /// <summary>A repeating field's entries as text, one per origin document, joined by <paramref name="sep"/>.</summary>
+    private static string Joined(object? projected, Field f, string sep)
+    {
+        if (projected is not string json) return "";
+        var items = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(json) ?? Array.Empty<System.Text.Json.JsonElement>();
+        return string.Join(sep, items.Select(e => e.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.Null => "",
+            System.Text.Json.JsonValueKind.String when f.Type == FieldType.Date && DateOnly.TryParse(e.GetString(), out var d)
+                => d.ToString("dd/MM/yyyy"),
+            System.Text.Json.JsonValueKind.String => e.GetString() ?? "",
+            _ => e.ToString()
+        }));
+    }
 
     private static string Quote(string s) =>
         s.Contains(',') || s.Contains('"') || s.Contains('\n') ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;

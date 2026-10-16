@@ -18,11 +18,11 @@ The Hub proves **identity**; BC Inventory keeps deciding **authorization**.
    Hub user to a **pre-existing** local account (by stored `sub`, then email), and issues an
    ordinary BC Inventory session.
 
-Because a normal session is issued, roles, entity scope, the audit trail and the per-request
+Because a normal session is issued, roles, company/site scope, the audit trail and the per-request
 session revalidation (AR-01) behave identically to a password login. SSO only replaces the
 password step.
 
-**No auto-provisioning.** A customs account needs an admin-assigned role and entity scope, so a
+**No auto-provisioning.** A customs account needs an admin-assigned role and site scope, so a
 Hub user with no matching **active** BC Inventory account is refused with a clear message — the
 administrator must create the account first (User Management). On first SSO login the Hub `sub` is
 stored on the account, so the link stays stable even if the email later changes.

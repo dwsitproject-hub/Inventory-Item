@@ -18,8 +18,7 @@ public static class Lpm
 
     public static async Task<IResult> Saldo(NpgsqlDataSource ds, UserScope scope, string? search, int? limit)
     {
-        var scopeAnd = (scope.AllEntities ? "" : " and l.entity_id = @scopeEntity")
-                     + (scope.AllCompanies ? "" : " and l.company_id = any(@scopeCompanies)");
+        var scopeAnd = Sites.RowFilter(scope);
         var searchAnd = string.IsNullOrWhiteSpace(search) ? "" :
             " and (coalesce(l.data->>'Material Code', l.data->>'Material / Code') ilike @search" +
             " or coalesce(l.data->>'Commodity', l.data->>'Material / Description') ilike @search)";
@@ -56,7 +55,7 @@ public static class Lpm
         await using var con = await ds.OpenConnectionAsync();
         var rows = (await con.QueryAsync(sql, new
         {
-            scopeEntity = scope.EntityId,
+            scopeSites = scope.SiteIds,
             scopeCompanies = scope.CompanyIds,
             search = "%" + (search ?? "").Trim() + "%",
             limit = Math.Clamp(limit ?? 500, 1, 2000)
@@ -67,8 +66,7 @@ public static class Lpm
     /// <summary>BC 4.0 goods-receipt realisation variances: delivered vs declared beyond tolerance.</summary>
     public static async Task<IResult> Variances(NpgsqlDataSource ds, UserScope scope, int? limit)
     {
-        var scopeAnd = (scope.AllEntities ? "" : " and l.entity_id = @scopeEntity")
-                     + (scope.AllCompanies ? "" : " and l.company_id = any(@scopeCompanies)");
+        var scopeAnd = Sites.RowFilter(scope);
         var sql = $"""
             with v as (
                 select l.data->>'Location' as location,
@@ -104,7 +102,7 @@ public static class Lpm
             """;
 
         await using var con = await ds.OpenConnectionAsync();
-        var rows = (await con.QueryAsync(sql, new { scopeEntity = scope.EntityId, scopeCompanies = scope.CompanyIds, limit = Math.Clamp(limit ?? 100, 1, 500) })).ToList();
+        var rows = (await con.QueryAsync(sql, new { scopeSites = scope.SiteIds, scopeCompanies = scope.CompanyIds, limit = Math.Clamp(limit ?? 100, 1, 500) })).ToList();
         var summary = await con.QueryFirstAsync($"""
             select count(*) filter (where coalesce(
                        {Num("l.data->>'Realization of Good Receipts / (+/-)'")},
@@ -113,7 +111,7 @@ public static class Lpm
                    count(*) filter (where l.data ? 'Realization of Good Receipts / Delivery Qty') as "deliveryTracked",
                    count(*) as "totalLines"
             from bc.document_lines l where l.template = 'BC40'{scopeAnd}
-            """, new { scopeEntity = scope.EntityId, scopeCompanies = scope.CompanyIds });
+            """, new { scopeSites = scope.SiteIds, scopeCompanies = scope.CompanyIds });
         return Results.Ok(new
         {
             rows,
