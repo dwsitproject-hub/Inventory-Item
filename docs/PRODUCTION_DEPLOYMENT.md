@@ -44,12 +44,27 @@ Collect these and write them into a secure note (not into any tracked file):
 | New `bcapp_rw` password | You invent it — letters/digits only (avoid `$ # space '`) |
 | New `JWT_KEY` | `openssl rand -base64 48` |
 | New seed admin / site passwords | ≥10 chars, meet the policy |
-| Production hostname | e.g. `it-inventory.kpndomain.com` |
+| Production hostname | e.g. `it-inventory.energi-up.com` |
 | TLS certificate + key | For that hostname |
 | SMTP relay (optional) | Host, port, whether it needs TLS/credentials |
+| **DWS Hub SSO** — production issuer | The **production** Hub base URL, e.g. `https://dwshub.kpndomain.com`. Must exactly match the `issuer` in that Hub's discovery document — confirm it with the DWS Hub team (staging was `http://test-dwshub.kpndomain.com`). |
+| **DWS Hub SSO** — production client id | A **new** `oauth_client_id` the Hub admin assigns for production (staging used `it-inventory-test`; production gets its own). |
 
 **Whitelist the hosts on the ApsaraDB instance** (Alibaba console → Data Security → Whitelist):
 add **172.28.80.50** and **172.28.80.51**. Without this the connection is refused.
+
+**Register the production app in DWS Hub** (Hub Admin → the app). Do this before step 3.4 so SSO
+has something to talk to:
+
+- `sso_mode` = `OIDC (strict)`
+- `oauth_client_id` = the new production client id (matches `SSO_CLIENT_ID` in the `.env`)
+- **OIDC Redirect URIs** includes **exactly** `https://it-inventory.energi-up.com/auth/sso/callback`
+  (HTTPS — the production callback; no trailing slash)
+- **Target URL** = `https://it-inventory.energi-up.com/`
+
+The Hub tile drives an IdP-initiated launch: the Hub runs `authorize` with the user's Hub session
+and redirects to the callback with `code` + `code_verifier`. Over production HTTPS that redirect is
+encrypted in transit. Full behaviour and failure codes are in [`DWS_HUB_SSO.md`](DWS_HUB_SSO.md).
 
 ---
 
@@ -65,16 +80,24 @@ sudo ss -lntp | sort -t: -k2 -n
 
 Read the LISTEN list and choose:
 
-| Setting | Purpose | Host | Must be free |
+| Setting | Purpose | Host | Chosen port |
 |---|---|---|---|
-| `WEB_PORT` | web container publish (behind the host nginx) | FE 172.28.80.50 | pick a free high port, e.g. 8090 |
-| host nginx `443` / `80` | public HTTPS / HTTP-redirect | FE 172.28.80.50 | 443 free; 80 free or already the host nginx |
-| `API_PORT` | API container publish | BE 172.28.80.51 | pick a free high port, e.g. 8091 |
+| `WEB_PORT` | web container publish (behind the host nginx) | FE 172.28.80.50 | **8090** (verified free) |
+| host nginx `443` / `80` | public HTTPS / HTTP-redirect | FE 172.28.80.50 | already the host nginx |
+| `API_PORT` | API container publish | BE 172.28.80.51 | **8091** (verified free) |
 
-Confirm a specific candidate is free before using it (empty output = free):
+> **Chosen from the 2026-09-07 scan.** On FE (172.28.80.50) nginx already owns 80 + 443 (use a
+> vhost, step 5.3); taken high ports were 3010/3020/3040/3042/3080/3081/3100/8000/8080/8081/8443/9999,
+> so **8090** is free for `WEB_PORT`. On BE (172.28.80.51) taken ports were
+> 3000/3003/4000/4001/5000/5010/5050/5422/5434/8001/8080/13000, so **8091** is free for `API_PORT`.
+> Nothing listens on 5432 locally on BE — correct, the database is the managed ApsaraDB instance,
+> not this host (its name "ECS-DB" notwithstanding).
+
+Confirm each is still free immediately before binding (empty output = free):
 
 ```bash
-sudo ss -lntp | grep -w 8090 || echo "8090 is free"
+sudo ss -lntp | grep -w 8090 || echo "8090 is free"   # on FE 172.28.80.50
+sudo ss -lntp | grep -w 8091 || echo "8091 is free"   # on BE 172.28.80.51
 ```
 
 If the host's nginx already owns port 80/443, you will add a **virtual host** to it rather than
@@ -84,12 +107,55 @@ starting another web server — see step 5.
 
 ## 2. Get the code onto both hosts
 
-On **both** 172.28.80.50 and 172.28.80.51:
+### 2.1 Give each host repo access (SSH) — one-time per host
+
+The clone URL uses the SSH **alias** `github-bcinventory` (not a real hostname). Each host must
+define that alias and hold a key authorised on the repo. A fresh ECS host has neither, so the
+clone fails with `Could not resolve hostname github-bcinventory`, `Permission denied (publickey)`
+or `Host key verification failed`. Set it up once **on each host**:
+
+```bash
+# 1. Generate a deploy key unique to this host
+ssh-keygen -t ed25519 -f ~/.ssh/bcinventory_deploy -N '' -C "bc-inventory-$(hostname)"
+
+# 2. Define the github-bcinventory alias
+cat >> ~/.ssh/config <<'EOF'
+Host github-bcinventory
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/bcinventory_deploy
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+
+# 3. Print the PUBLIC key to register on GitHub
+cat ~/.ssh/bcinventory_deploy.pub
+```
+
+In GitHub: **repo → Settings → Deploy keys → Add deploy key**, paste that public key, leave
+**Allow write access unchecked** (production only pulls). GitHub accepts a given public key once,
+so generate a **separate** key per host (the command above already does). Verify:
+
+```bash
+ssh -T git@github-bcinventory   # "Hi …/Inventory-Item! You've successfully authenticated" (shell-access notice is fine)
+```
+
+> Prefer not to use SSH? Clone over HTTPS with a personal access token instead:
+> `git clone https://github.com/dwsitproject-hub/Inventory-Item.git /opt/bc-inventory` and enter a
+> PAT when prompted. The rest of the runbook is unchanged.
+
+### 2.2 Clone (or update) the repo
+
+On **both** 172.28.80.50 and 172.28.80.51 — this block is safe to re-run (it updates an existing
+checkout rather than failing), and it does **not** hide clone errors:
 
 ```bash
 sudo mkdir -p /opt/bc-inventory && sudo chown "$USER" /opt/bc-inventory
-git clone git@github-bcinventory:dwsitproject-hub/Inventory-Item.git /opt/bc-inventory 2>/dev/null \
-  || (cd /opt/bc-inventory && git fetch origin)
+if [ -d /opt/bc-inventory/.git ]; then
+  cd /opt/bc-inventory && git fetch origin
+else
+  git clone git@github-bcinventory:dwsitproject-hub/Inventory-Item.git /opt/bc-inventory
+fi
 cd /opt/bc-inventory && git checkout main && git pull --ff-only
 git rev-parse --short HEAD          # note the commit you are deploying
 ```
@@ -101,13 +167,80 @@ tested commit), check that out on both hosts so they match exactly.
 
 ## 3. Prepare the database (once, from the backend host)
 
-### 3.1 Create the least-privilege role (AR-06)
+> **Container DNS (do this first if the host uses systemd-resolved).** The app, the migrate and the
+> container `psql` option all resolve the RDS hostname **from inside a container**. If the host's
+> `/etc/resolv.conf` is the systemd-resolved stub (`127.0.0.53`), Docker can't use it and falls back
+> to public DNS (8.8.8.8), which returns a wrong/public answer for the *internal* RDS name — the
+> connection then fails with `SocketException (101): Network unreachable` (often on an IPv6 address).
+> The host itself resolves fine; only containers are affected.
+>
+> **Preferred fix — pin `DB_HOST` to the private IPv4** (`deploy/backend/.env`), which sidesteps
+> container DNS entirely and needs no daemon change:
+> `sed -i 's|^DB_HOST=.*|DB_HOST=172.28.92.66|' .env`. Confirm the port is reachable first
+> (whitelist): `timeout 5 bash -c 'cat < /dev/null > /dev/tcp/172.28.92.66/5432' && echo OPEN || echo BLOCKED`.
+> This also handles the case where the RDS name publishes a public **AAAA** (IPv6) record that
+> Npgsql prefers but the container cannot route (`Network unreachable` on an IPv6 address).
+>
+> **⚠ Do NOT `systemctl restart docker` on a shared host.** It restarts **every** container on the
+> box, and any other app's container whose restart policy isn't `always`/`unless-stopped` stays
+> **down** afterward — a self-inflicted outage of unrelated apps (this bit us: pm.energi-up.com's
+> API on this host went 502 because its container did not come back). With `DB_HOST` pinned to the
+> IP above you never need to touch the daemon. If you genuinely must set daemon-wide DNS, give
+> **only this app's** container the resolver instead — add `dns: ["100.100.2.136","100.100.2.138"]`
+> to the `api` service in `deploy/backend/docker-compose.yml`, or pass `--dns 100.100.2.136` to the
+> one-off `docker run`. If the daemon was already restarted and other apps are now 502, recover
+> them with `docker ps -a` → `docker start <name>` for each `Exited` container.
+
+> **Run the sub-steps in this order: 3.2 (`.env`) → 3.3 (migrate as owner) → 3.1 (create + grant
+> the role).** The role script grants on the schemas and tables the migrate creates, and revokes
+> writes on the audit table, so those objects must exist **first**. If you run 3.1 before the
+> migrate, the grant loop hits `schema … does not exist`, psql continues, and the role ends up with
+> login but **no privileges** — the app then crashes with `permission denied for schema auth`. The
+> script is idempotent, so the fix is simply to **re-run 3.1** after the migrate.
+
+### 3.1 Create and grant the least-privilege role (AR-06)
+
+> **Run this _after_ 3.3 (the migrate).** It is safe to re-run at any time (e.g. after a later
+> schema change) and re-applies the grants to whatever objects now exist.
+
+> **Placeholders in this runbook are ALL-CAPS words like `PGADMIN`.** Replace them with real values
+> — do **not** paste `< >` brackets into a shell: `<` is bash's input-redirect operator, so
+> `-U <privileged account>` fails with `bash: privileged: No such file or directory`. Run each `cd`
+> on its own line too, so a paste can't merge it into the next command's arguments.
+
+This needs the `psql` client. A fresh host may only have the wrapper, which errors with
+`You must install at least one postgresql-client-<version> package`. Either install it once:
+
+```bash
+sudo apt-get update && sudo apt-get install -y postgresql-client
+```
+
+Run the `cd` first, then the `psql` (two separate lines):
 
 ```bash
 cd /opt/bc-inventory/deploy/db
-psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U <privileged account> -d bcinventory \
-     -v app_password='<the new bcapp_rw password>' -f create-app-role.sql
 ```
+
+```bash
+psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U PGADMIN -d bcinventory \
+     -v app_password='NEW_BCAPP_RW_PASSWORD' -f create-app-role.sql
+```
+
+Or, to avoid a host install, run the same thing from a container (Docker is already present):
+
+```bash
+cd /opt/bc-inventory/deploy/db
+docker run --rm -e PGPASSWORD='PGADMIN_PW' \
+  -v "$PWD/create-app-role.sql:/create-app-role.sql:ro" \
+  postgres:16 \
+  psql -h pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com -U PGADMIN -d bcinventory \
+       -v app_password='NEW_BCAPP_RW_PASSWORD' -f /create-app-role.sql
+```
+
+- `PGADMIN` → the ApsaraDB **privileged** account (Alibaba console → RDS → Accounts if unsure).
+  Replace the literal word `PGADMIN` — leaving it fails cleanly with `role "PGADMIN" does not exist`.
+- `PGADMIN_PW` → that account's password (container form only; the plain `psql` prompts for it).
+- `NEW_BCAPP_RW_PASSWORD` → the new `bcapp_rw` password you chose — letters/digits only.
 
 Pass the password **bare** in single quotes — no inner quotes (the script refuses a quoted value).
 Check the output: `rolsuper` must be `f`, and the audit line must read `can_read=1, can_delete=0`.
@@ -124,7 +257,7 @@ cd /opt/bc-inventory/deploy/backend && cp -n .env.example .env && nano .env && c
 Set, for production:
 
 ```
-DB_HOST=pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com
+DB_HOST=pgm-d9jn3khh0b3907w4.pgsql.ap-southeast-5.rds.aliyuncs.com   # or the private IP (172.28.92.66) if the name resolves to an unreachable IPv6 — see the DNS note above
 DB_PORT=5432
 DB_NAME=bcinventory
 DB_USER=bcapp_rw
@@ -137,7 +270,16 @@ API_PORT=8091                 # the free port you chose in step 1
 
 JWT_KEY=<openssl rand -base64 48>
 JWT_LIFETIME_MINUTES=120
-CORS_ORIGINS=https://it-inventory.kpndomain.com   # the production origin(s), comma-separated
+CORS_ORIGINS=https://it-inventory.energi-up.com   # the production origin(s), comma-separated
+
+# DWS Hub single sign-on. Leave SSO_ENABLED=false to launch without SSO and turn it on later.
+# Issuer and callback are HTTPS in production; the client id is the production one, not the
+# staging it-inventory-test.
+SSO_ENABLED=true
+SSO_ISSUER=https://dwshub.kpndomain.com                 # the production Hub issuer (confirm exactly)
+SSO_CLIENT_ID=<production oauth_client_id from Hub>
+SSO_REDIRECT_URI=https://it-inventory.energi-up.com/auth/sso/callback
+SSO_SCOPE=openid profile email
 
 SEED_ADMIN_PASSWORD=<strong, ≥10 chars>
 SEED_SITE_PASSWORD=<strong, ≥10 chars>
@@ -150,6 +292,14 @@ SMTP_USER=
 SMTP_PASSWORD=
 ```
 
+Before moving on, confirm you actually changed the defaults — `.env.example` ships `DB_USER=bcapp`,
+and leaving it makes the app fail at startup with `password authentication failed for user "bcapp"`:
+
+```bash
+grep -E '^DB_(USER|PASSWORD|HOST)=' .env
+# DB_USER must be bcapp_rw (NOT the example's bcapp), DB_PASSWORD its password, DB_HOST reachable.
+```
+
 ### 3.3 Apply the schema with the owner account
 
 `bcapp_rw` cannot create or alter tables, so the first-time schema (and any later schema change)
@@ -157,12 +307,22 @@ is applied by the privileged account. The overrides go in the **shell, before** 
 
 ```bash
 cd /opt/bc-inventory/deploy/backend
-DB_USER=<privileged account> DB_PASSWORD='<privileged pw>' DB_AUTO_MIGRATE=true \
+```
+
+```bash
+DB_USER=PGADMIN DB_PASSWORD='PGADMIN_PW' DB_AUTO_MIGRATE=true \
   docker compose run --rm api --migrate
 ```
 
+`PGADMIN` / `PGADMIN_PW` are the same ApsaraDB privileged account and password as 3.1 (real values,
+no `< >` brackets).
+
 It should print `[migrate] schema applied and seeded — exiting without serving.` This also seeds
 the two initial accounts from `SEED_ADMIN_PASSWORD` / `SEED_SITE_PASSWORD`.
+
+> This migrate applies the **full** schema, including the `sso_sub` column SSO needs — there is no
+> separate SSO migration. (On staging that column was added after the fact and caused an `SSO-006`
+> until the owner `--migrate` was run; running it here first avoids that.)
 
 ---
 
@@ -177,6 +337,13 @@ Confirm it is healthy and reachable **from this host**:
 
 ```bash
 curl -s http://172.28.80.51:8091/api/v1/health          # -> {"status":"ok","db":true}
+```
+
+If SSO is enabled, confirm the backend reached the Hub and built its config (a failure here just
+hides the button — password login still works, so investigate but it is not a launch blocker):
+
+```bash
+curl -s http://172.28.80.51:8091/api/v1/auth/sso/info    # -> enabled:true + the production Hub endpoints
 ```
 
 Confirm it runs as the unprivileged user and on the least-privilege role:
@@ -221,6 +388,17 @@ nano /opt/bc-inventory/deploy/frontend/nginx.staging.conf
 - set the `/api/` proxy target to the backend host and port you chose:
   `proxy_pass http://172.28.80.51:8091$request_uri;` — this must match `API_BIND:API_PORT` from 3.2.
 
+`nginx.staging.conf` is tracked in git, so once you edit it `update.sh` refuses to run
+(`!! tracked files have local edits`) because it does a `git pull`. Tell git to keep your local
+version and stop reporting it as changed — the container mounts the file at runtime, so your edit
+stays live and future pulls still fast-forward:
+
+```bash
+git -C /opt/bc-inventory update-index --skip-worktree deploy/frontend/nginx.staging.conf
+```
+
+(Reverse with `--no-skip-worktree` only if you later need to take an upstream change to that file.)
+
 ### 5.2 Build and start the web container
 
 ```bash
@@ -244,13 +422,24 @@ sudo cp /opt/bc-inventory/deploy/frontend/host-nginx-vhost.conf /etc/nginx/sites
 sudo nano /etc/nginx/sites-available/bc-inventory.conf
 ```
 
-In that file:
-- set `server_name` to the production hostname;
-- set `proxy_pass http://127.0.0.1:8090;` (your `WEB_PORT`);
-- **uncomment the `listen 443 ssl` server block and the HTTP→HTTPS redirect**, and point
-  `ssl_certificate` / `ssl_certificate_key` at the installed cert and key;
-- **uncomment the `Strict-Transport-Security` header** (it ships commented in both the host vhost
-  and `nginx.staging.conf`) now that TLS terminates in front.
+The shipped file is the **staging** vhost: an active `listen 80` block that *serves* the site, plus
+a commented TLS block and a commented redirect. For production you want the reverse — 443 serves,
+80 only redirects — so do **not** just uncomment the two blocks (that leaves two `listen 80` blocks
+for the same `server_name` and `nginx -t` fails). Instead make the file read as **exactly two**
+server blocks:
+
+- **`listen 80`** → only `return 301 https://$host$request_uri;` (no `location`, no proxy).
+- **`listen 443 ssl http2;`** → serves the site: the `location /` proxy, all the AR-05 headers
+  **plus** the now-uncommented `Strict-Transport-Security` header, and `ssl_certificate` /
+  `ssl_certificate_key` pointing at the installed cert and key. Put `http2` **on the `listen` line**
+  — a separate `http2 on;` directive only exists in nginx ≥ 1.25.1 and fails on 1.24.x with
+  `unknown directive "http2"`.
+
+In both blocks set `server_name` to the production hostname, and in the 443 `location` set
+`proxy_pass http://127.0.0.1:8090;` (your `WEB_PORT` — the shipped file still says `8088`). Do
+**not** add `default_server` to any `listen` line: another app on this host already owns the
+default, and a second one breaks `nginx -t`. The cert and key must exist at their paths before you
+test, or nginx refuses to load.
 
 > Two nginx layers carry the security headers: the host vhost (public) and the web container's
 > `nginx.staging.conf` (internal). Uncomment HSTS in both so it is present whichever layer answers.
@@ -263,8 +452,8 @@ sudo nginx -t && sudo systemctl reload nginx
 Confirm the public endpoint and that HTTP redirects:
 
 ```bash
-curl -sI https://it-inventory.kpndomain.com/ | head -1                 # 200
-curl -sI http://it-inventory.kpndomain.com/  | grep -i location        # 301 -> https
+curl -sI https://it-inventory.energi-up.com/ | head -1                 # 200
+curl -sI http://it-inventory.energi-up.com/  | grep -i location        # 301 -> https
 ```
 
 ---
@@ -283,6 +472,17 @@ Run through this before announcing the URL:
 - [ ] Try a wrong password five times → the account locks (throttle live).
 - [ ] The API host is **not** reachable from a machine other than 172.28.80.50.
 
+If SSO is enabled, also:
+
+- [ ] `curl https://<host>/api/v1/auth/sso/info` → `enabled:true` with the production Hub endpoints.
+- [ ] The **Sign in with DWS Hub** button appears on the login page.
+- [ ] Create one real Hub user's email as an **active** account (Admin → User Management) — SSO does
+      **not** auto-create accounts; an unmatched Hub user is refused with `SSO-005`.
+- [ ] Click the **IT Inventory tile in the Hub** → you land in the app; the Audit Log records
+      `auth.sso_login`. (A `SSO-006` here means the schema migrate was skipped; `SSO-005` means the
+      email is not an active account.)
+- [ ] Password sign-in still works for an account with no Hub identity (e.g. the Super Admin).
+
 Then **rotate the seeded admin password** from a strong one you set, and confirm the old one no
 longer works.
 
@@ -300,8 +500,11 @@ each identifies as the right template and the row counts match the files.
 If a release misbehaves, roll the code back on the affected host and rebuild:
 
 ```bash
-cd /opt/bc-inventory && git checkout <previous good commit> && cd deploy && ./update.sh <tier>
+cd /opt/bc-inventory && git checkout PREV_GOOD_COMMIT && cd deploy && ./update.sh TIER
 ```
+
+`PREV_GOOD_COMMIT` = the commit hash to roll back to; `TIER` = `backend` or `frontend` (real
+values, no `< >` brackets).
 
 The database is not rolled back by this. A schema change is forward-only; if one caused the
 problem, restore from an ApsaraDB backup/snapshot taken **before** the migration (take one in the
@@ -331,8 +534,9 @@ on a production host it targets production.
 |---|---|---|---|
 | FE 172.28.80.50 | 443 | 0.0.0.0 | public HTTPS (host nginx) |
 | FE 172.28.80.50 | 80 | 0.0.0.0 | HTTP → HTTPS redirect |
-| FE 172.28.80.50 | `WEB_PORT` (e.g. 8090) | 127.0.0.1 | web container (host nginx proxies to it) |
-| BE 172.28.80.51 | `API_PORT` (e.g. 8091) | 172.28.80.51 | API container (frontend host only) |
+| FE 172.28.80.50 | **8090** (`WEB_PORT`) | 127.0.0.1 | web container (host nginx proxies to it) |
+| BE 172.28.80.51 | **8091** (`API_PORT`) | 172.28.80.51 | API container (frontend host only) |
 | ApsaraDB | 5432 | instance | database (whitelist FE + BE) |
 
-Confirm each host port is free with `sudo ss -lntp | grep -w <port>` before binding it.
+Ports 8090/8091 were confirmed free from the 2026-09-07 scan of both hosts. Re-confirm with
+`sudo ss -lntp | grep -w <port>` before binding, in case something new started in the interim.

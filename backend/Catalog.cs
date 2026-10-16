@@ -8,7 +8,13 @@ public enum FieldType { Text, Number, Date }
 /// (PRD v1.2 App. D & E). <see cref="Label"/> is the customs-terminology name shown to users;
 /// when absent the verbatim name is displayed.
 /// </summary>
-public record Field(string Name, FieldType Type, string Group = "", string? Label = null)
+/// <para><see cref="OptIn"/> marks a column a site must switch on (Admin → Master Data → site →
+/// Reports → Columns): it is in the upload template and stored like any other, but a site's
+/// starter column set leaves it out.</para>
+/// <para><see cref="Repeats"/> marks a column that may hold several values for one line — one per
+/// origin document. Upload rows that differ only in such columns are one line; the values are
+/// stored as a JSON array and shown stacked in one cell (see Ingestion.MergeRepeating).</para>
+public record Field(string Name, FieldType Type, string Group = "", string? Label = null, bool OptIn = false, bool Repeats = false)
 {
     public string Display => Label ?? Name;
 }
@@ -326,6 +332,21 @@ public static class Catalog
         new("Insurance", FieldType.Number, "Nilai Barang", "Nilai Asuransi"),
     };
 
+    // ---------- Laporan BC 2.7 Out ----------
+    // The shared outbound layout plus "Dokumen Asal Barang": the origin customs documents each line
+    // draws on, and how much of each was used. Opt-in per site. One line may draw on several origin
+    // documents — the upload then repeats the line once per document — so these columns repeat.
+    // A file carrying them matches BC 2.7 Out outright; one without them still ties with
+    // BC 2.5 / 4.1 and is told apart by name.
+    public static readonly Field[] Bc27Out = BcOut.Concat(new Field[]
+    {
+        new("Dokumen Asal Barang / Tipe Dokumen", FieldType.Text, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / No Daftar", FieldType.Text, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / Tanggal Daftar", FieldType.Date, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / Qty Pemakaian", FieldType.Number, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+        new("Dokumen Asal Barang / Satuan", FieldType.Text, "Dokumen Asal Barang", OptIn: true, Repeats: true),
+    }).ToArray();
+
     public static readonly string[] Bc27InDefaults =
     {
         "Jenis Dok.", "Dok. Pabean / Nomor", "Dok. Pabean / Tanggal", "Pemasok/Pengirim",
@@ -343,6 +364,7 @@ public static class Catalog
         { "Dok. Pabean / Nomor", "Bukti Penerimaan / Nomor", "Dokumen / Nomor", "Pemasok/Pengirim", "Kode Barang", "Nama Barang", "HS Code" };
     private static readonly string[] BcOutSearch =
         { "Dok. Pabean / Nomor", "Bukti Pengeluaran / Nomor", "Dokumen / Nomor", "Penerima / Pembeli", "Kode Barang", "Nama Barang" };
+    private static readonly string[] Bc27OutSearch = BcOutSearch.Append("Dokumen Asal Barang / No Daftar").ToArray();
 
     /// <summary>
     /// Page = which screen hosts the report: "reports" (customs documents) or "movement".
@@ -361,9 +383,16 @@ public static class Catalog
     /// false — two reports claiming one template would make layout identification ambiguous.
     /// </param>
     /// <param name="Browse">Appears in the report picker on its page.</param>
+    // When several reports share a column layout, the upload sniffer separates them in this order:
+    //   1. DocTypeColumn/DocTypeValues — a document-type code carried in the rows themselves
+    //      (e.g. "Jenis Dok." 30 vs 33). Compared ignoring spaces, dots and a leading "BC".
+    //   2. NameHints — text in the sheet name, file name or title row.
+    //   3. PreferOnTie — the established report of the group wins when nothing above decides, so
+    //      its existing files (which never needed a hint) keep loading exactly as before.
     public record Report(string Key, string Title, string Template, Field[] Fields, string[] Defaults,
                          string[] SearchFields, string Page = "reports", string[]? NameHints = null,
-                         string? Where = null, bool Upload = true, bool Browse = true);
+                         string? Where = null, bool Upload = true, bool Browse = true, bool PreferOnTie = false,
+                         string? DocTypeColumn = null, string[]? DocTypeValues = null);
 
     // Kode Barang prefixes that route rows out of the file they arrived in. Sparepart is the 9xx
     // range except 912; 912 is bahan penolong and is reported with Bahan Baku; everything else in
@@ -378,12 +407,19 @@ public static class Catalog
     {
         new("pib-import", "Pemasukan Barang — PIB Import (BC 2.3)", "BC23", Pib, PibDefaults, PibSearch),
         new("bc40-receipt", "Pemasukan Barang — BC 4.0", "BC40", Bc40, Bc40Defaults, Bc40Search),
+        // BC 3.0 and BC 3.3 share one layout; each row's "Jenis Dok." (30 / 33) says which it is.
+        // Name hints are the fallback for a file with no recognisable code (e.g. a blank template),
+        // and BC 3.0 — whose real files carry no hint at all — stays the default after that.
         new("bc30-export", "Pengeluaran Barang — BC 3.0 (PEB)", "BC30", Bc30, Bc30Defaults, Bc30Search,
-            "reports", new[] { "BC 3.0", "BC30" }),
+            "reports", new[] { "BC 3.0", "BC3.0", "BC30" }, PreferOnTie: true,
+            DocTypeColumn: "Jenis Dok.", DocTypeValues: new[] { "30" }),
+        new("bc33-export", "Pengeluaran Barang — BC 3.3", "BC33", Bc30, Bc30Defaults, Bc30Search,
+            "reports", new[] { "BC 3.3", "BC3.3", "BC33" },
+            DocTypeColumn: "Jenis Dok.", DocTypeValues: new[] { "33" }),
         new("bc27-in", "Pemasukan Barang — BC 2.7", "BC27IN", Bc27In, Bc27InDefaults, Bc27InSearch,
             "reports", new[] { "BC 2.7", "27IN" }),
         // These three share one layout; the hint is the only thing that separates them.
-        new("bc27-out", "Pengeluaran Barang — BC 2.7", "BC27OUT", BcOut, BcOutDefaults, BcOutSearch,
+        new("bc27-out", "Pengeluaran Barang — BC 2.7", "BC27OUT", Bc27Out, BcOutDefaults, Bc27OutSearch,
             "reports", new[] { "BC 2.7", "27OUT" }),
         new("bc25-out", "Pengeluaran Barang — BC 2.5", "BC25", BcOut, BcOutDefaults, BcOutSearch,
             "reports", new[] { "BC 2.5", "BC25" }),

@@ -98,9 +98,11 @@ var migrateOnly = args.Contains("--migrate");
 await Db.EnsureCreated(ds, autoMigrate || migrateOnly);
 Audit.Configure(ds);                 // before Seed, so a startup password reset is audited
 Notifications.Configure(ds, app.Configuration);
+Sso.Configure(app.Configuration);
 await Db.Seed(ds, app.Configuration);
 Permissions.Configure(ds);
 await Permissions.EnsureSeeded(ds);
+SiteReports.Configure(ds);
 
 if (migrateOnly)
 {
@@ -125,24 +127,36 @@ api.MapGet("/health", async () =>
 api.MapPost("/auth/login", (LoginRequest req, HttpContext ctx) =>
     Auth.Login(ds, app.Configuration, req, ctx.Connection.RemoteIpAddress?.ToString()));
 
+// ---------- single sign-on via DWS Hub (OIDC + PKCE) ----------
+api.MapGet("/auth/sso/info", () => Sso.Info());
+api.MapPost("/auth/sso/callback", (SsoCallbackRequest req, HttpContext ctx) =>
+    Sso.Callback(ds, app.Configuration, req, ctx.Connection.RemoteIpAddress?.ToString()));
+
 api.MapGet("/me", (System.Security.Claims.ClaimsPrincipal user) => Auth.Me(ds, user)).RequireAuthorization();
 
-api.MapGet("/reports", () => Results.Ok(Reports.CatalogList())).RequireAuthorization();
+// The catalog is per user: a report the user's site is not configured to see is marked not
+// browsable (Admin → Master Data), so it drops out of the Reports / Inventory Movement picker.
+api.MapGet("/reports", async (System.Security.Claims.ClaimsPrincipal user) =>
+    Results.Ok(Reports.CatalogList(await SiteReports.For(Auth.Scope(user))))).RequireAuthorization();
 
 api.MapPost("/reports/{key}/query", async (string key, QueryRequest req, HttpContext ctx) =>
 {
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
     if (await Permissions.Require(scope, page, "view") is { } err) return err;
-    return await Reports.Query(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+    var view = await SiteReports.For(scope);
+    if (SiteReports.Require(view, key) is { } serr) return serr;
+    return await Reports.Query(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);
 }).RequireAuthorization();
 
 api.MapPost("/reports/{key}/export", async (string key, string? format, QueryRequest req, HttpContext ctx) =>
 {
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
-    if (await Permissions.Require(scope, page, "edit") is { } err) return err;
-    return await Exports.Run(ds, key, format ?? "xlsx", req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+    if (await Permissions.Require(scope, page, "export") is { } err) return err;
+    var view = await SiteReports.For(scope);
+    if (SiteReports.Require(view, key) is { } serr) return serr;
+    return await Exports.Run(ds, key, format ?? "xlsx", req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);
 }).RequireAuthorization();
 
 // Permanently delete ingested rows (FR-R14). Governed by the "delete" permission on the report's page.
@@ -151,7 +165,9 @@ api.MapPost("/reports/{key}/delete", async (string key, DeleteRequest req, HttpC
     var scope = Auth.Scope(ctx.User);
     var page = Catalog.Get(key)?.Page ?? "reports";
     if (await Permissions.Require(scope, page, "delete") is { } err) return err;
-    return await Reports.Delete(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString());
+    var view = await SiteReports.For(scope);
+    if (SiteReports.Require(view, key) is { } serr) return serr;
+    return await Reports.Delete(ds, key, req, scope, ctx.Connection.RemoteIpAddress?.ToString(), view);
 }).RequireAuthorization();
 
 api.MapGet("/reports/{key}/template", (string key, HttpContext ctx) =>
@@ -241,6 +257,9 @@ api.MapPost("/admin/users/{id:long}/status", (long id, StatusRequest req, HttpCo
 api.MapPost("/admin/users/{id:long}/reset", (long id, ResetPasswordRequest req, HttpContext ctx) =>
     Admin.ResetPassword(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
 
+api.MapPut("/admin/users/{id:long}/sites", (long id, SitesRequest req, HttpContext ctx) =>
+    Admin.SetSites(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
+
 api.MapGet("/admin/master", (System.Security.Claims.ClaimsPrincipal user) =>
     Admin.Master(ds, Auth.Scope(user))).RequireAuthorization();
 
@@ -251,25 +270,45 @@ api.MapGet("/admin/notification-subscriptions", (System.Security.Claims.ClaimsPr
 api.MapPut("/admin/notification-subscriptions", (NotificationSubscriptionUpdate req, HttpContext ctx) =>
     Notifications.UpdateSubscriptions(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 
-api.MapPost("/admin/entities", (EntityRequest req, HttpContext ctx) =>
-    Admin.AddEntity(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
-
 api.MapPost("/admin/sites", (SiteRequest req, HttpContext ctx) =>
     Admin.AddSite(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
+
+api.MapPut("/admin/sites/{id:long}/reports", (long id, SiteReportsRequest req, HttpContext ctx) =>
+    SiteReports.Set(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
 
 api.MapPost("/admin/tpb-permits", (PermitRequest req, HttpContext ctx) =>
     Admin.AddPermit(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
 
+// ---- companies (multi-tenant): management is Super-Admin-only (enforced in Companies) ----
+api.MapGet("/companies", (System.Security.Claims.ClaimsPrincipal user) =>
+    Companies.List(ds, Auth.Scope(user))).RequireAuthorization();
+api.MapPost("/companies", (CompanyRequest req, HttpContext ctx) =>
+    Companies.Create(ds, Auth.Scope(ctx.User), req)).RequireAuthorization();
+api.MapPut("/companies/{id:long}", (long id, CompanyRequest req, HttpContext ctx) =>
+    Companies.Update(ds, Auth.Scope(ctx.User), id, req)).RequireAuthorization();
+api.MapGet("/companies/{id:long}/logo", (long id) => Companies.Logo(ds, id)).RequireAuthorization();
+api.MapPut("/admin/users/{id:long}/companies", (long id, SetCompaniesRequest req, HttpContext ctx) =>
+    Companies.SetUserCompanies(ds, Auth.Scope(ctx.User), id, req.CompanyIds ?? Array.Empty<long>())).RequireAuthorization();
+// Companies the signed-in user may upload against (their own; Super Admin = all active).
+api.MapGet("/companies/pickable", async (HttpContext ctx) =>
+{
+    await using var con = await ds.OpenConnectionAsync();
+    return Results.Ok(await Companies.Pickable(con, Auth.Scope(ctx.User)));
+}).RequireAuthorization();
+
 api.MapGet("/ingestions", async (System.Security.Claims.ClaimsPrincipal user) =>
 {
-    if (await Permissions.Require(Auth.Scope(user), "ingestion", "view") is { } perr) return perr;
+    var scope = Auth.Scope(user);
+    if (await Permissions.Require(scope, "ingestion", "view") is { } perr) return perr;
     await using var con = await ds.OpenConnectionAsync();
-    var rows = await con.QueryAsync("""
-        select id, file_name as "fileName", template, source, status,
-               rows_total as "rowsTotal", rows_loaded as "rowsLoaded", rows_quarantined as "rowsQuarantined",
-               header_meta as "headerMeta", error, uploaded_by as "uploadedBy", received_at as "receivedAt"
-        from ingest.ingestion_files order by received_at desc limit 50
-        """);
+    var rows = await con.QueryAsync($"""
+        select f.id, f.file_name as "fileName", f.template, f.source, f.status,
+               f.rows_total as "rowsTotal", f.rows_loaded as "rowsLoaded", f.rows_quarantined as "rowsQuarantined",
+               f.header_meta as "headerMeta", f.error, f.uploaded_by as "uploadedBy", f.received_at as "receivedAt",
+               s.name as "siteName"
+        from ingest.ingestion_files f left join master.sites s on s.id = f.site_id
+        where true{Sites.RowFilter(scope, "f")} order by f.received_at desc limit 50
+        """, new { scopeCompanies = scope.CompanyIds, scopeSites = scope.SiteIds });
     return Results.Ok(rows);
 }).RequireAuthorization();
 
@@ -296,9 +335,23 @@ api.MapPost("/ingestions/upload", async (HttpRequest http, HttpContext ctx) =>
         return Results.Problem(statusCode: 400, title: "VAL-001",
             detail: $"File is {Fmt.N(file.Length / 1024.0 / 1024.0, 1)} MB; the cap is {Fmt.N(MaxUploadBytes / 1024 / 1024)} MB.");
 
+    // Which company this upload belongs to (multi-tenant). Single-company users default to theirs;
+    // Super Admin / multi-company users must have picked one on the Ingestion page.
+    long? requested = long.TryParse(form["companyId"], out var cid) ? cid : null;
+    var (companyId, cerr) = Companies.ResolveUploadCompany(scope, requested);
+    if (cerr is not null) return cerr;
+    // ...and which of its sites. Every row of the file is tagged with it.
+    long? requestedSite = long.TryParse(form["siteId"], out var sid) ? sid : null;
+    long? siteId;
+    await using (var con = await ds.OpenConnectionAsync())
+    {
+        (siteId, var serr) = await Sites.ResolveUpload(con, scope, companyId!.Value, requestedSite);
+        if (serr is not null) return serr;
+    }
+
     using var ms = new MemoryStream();
     await file.CopyToAsync(ms);
-    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email);
+    var result = await Ingestion.Load(ds, file.FileName, ms.ToArray(), "manual", scope.Email, scope, companyId, siteId);
     return Results.Ok(result);
 }).RequireAuthorization();
 

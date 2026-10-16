@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { ReportMeta, can, downloadTemplate, getUser, ingestions, quarantine, reportCatalog, uploadFile } from '../api'
+import { PickCompany, ReportMeta, can, downloadTemplate, getUser, ingestions, pickableCompanies, quarantine, reportCatalog, uploadFile } from '../api'
 import { fmtDateTime, fmtInt } from '../format'
 
 type FileRow = {
   id: number; fileName: string; template: string; source: string; status: string
   rowsTotal: number; rowsLoaded: number; rowsQuarantined: number
-  error?: string; uploadedBy?: string; receivedAt: string
+  error?: string; uploadedBy?: string; receivedAt: string; siteName?: string
 }
 
 const badge = (s: string) =>
@@ -22,17 +22,33 @@ export default function Ingestion() {
   const [qRows, setQRows] = useState<any[]>([])
   const [catalog, setCatalog] = useState<ReportMeta[]>([])
   const [openTpl, setOpenTpl] = useState<string | null>(null)
+  const [pickCos, setPickCos] = useState<PickCompany[]>([])
+  const [companyId, setCompanyId] = useState<number | ''>('')
+  const [siteId, setSiteId] = useState<number | ''>('')
+  const coSites = pickCos.find(c => c.id === companyId)?.sites ?? []
+  // Choosing a company picks its site too when it has only one for this user.
+  const chooseCompany = (id: number | '', cos: PickCompany[] = pickCos) => {
+    setCompanyId(id)
+    const sites = cos.find(c => c.id === id)?.sites ?? []
+    setSiteId(sites.length === 1 ? sites[0].id : '')
+  }
   const fileInput = useRef<HTMLInputElement>(null)
 
   const refresh = () => ingestions().then(setFiles).catch(e => setError(e.message))
-  useEffect(() => { refresh(); reportCatalog().then(setCatalog).catch(() => { /* non-fatal */ }) }, [])
+  useEffect(() => {
+    refresh()
+    reportCatalog().then(setCatalog).catch(() => { /* non-fatal */ })
+    if (canUpload) pickableCompanies().then(cs => { setPickCos(cs); if (cs.length === 1) chooseCompany(cs[0].id, cs) }).catch(() => { /* non-fatal */ })
+  }, [])
 
   async function doUpload() {
     const f = fileInput.current?.files?.[0]
     if (!f) return
+    if (companyId === '') { setError('Select the company this data belongs to.'); return }
+    if (siteId === '') { setError('Select the site this data belongs to.'); return }
     setBusy(true); setResult(null); setError('')
     try {
-      const res = await uploadFile(f)
+      const res = await uploadFile(f, companyId, siteId)
       setResult(res)
       refresh()
     } catch (e: any) {
@@ -58,13 +74,14 @@ export default function Ingestion() {
           <h3>Ingested files</h3>
           <div className="gridscroll" style={{ maxHeight: '48vh' }}>
             <table className="grid">
-              <thead><tr><th>File</th><th>Template</th><th>Source</th><th>Rows</th><th>Status</th><th>When</th><th></th></tr></thead>
+              <thead><tr><th>File</th><th>Template</th><th>Site</th><th>Source</th><th>Rows</th><th>Status</th><th>When</th><th></th></tr></thead>
               <tbody>
                 {files.map(f => (
                   <>
                     <tr key={f.id}>
                       <td>{f.fileName}</td>
                       <td>{f.template}</td>
+                      <td>{f.siteName ?? '—'}</td>
                       <td>{f.source}</td>
                       <td className="num">{fmtInt(f.rowsLoaded)}{f.rowsQuarantined > 0 && <span style={{ color: 'var(--warn)' }}> (+{fmtInt(f.rowsQuarantined)} quar.)</span>}</td>
                       <td><span className={'badge ' + badge(f.status)}>{f.status}</span></td>
@@ -76,7 +93,7 @@ export default function Ingestion() {
                     </tr>
                     {qFor === f.id && (
                       <tr key={f.id + '-q'}>
-                        <td colSpan={7} style={{ background: '#fbeee4', whiteSpace: 'normal' }}>
+                        <td colSpan={8} style={{ background: '#fbeee4', whiteSpace: 'normal' }}>
                           {qRows.map((q, i) => (
                             <div key={i} style={{ fontSize: 12, padding: '3px 0' }}>
                               <b>row {q.rowNo}</b>: {(q.reasons as string[]).join('; ')}
@@ -88,7 +105,7 @@ export default function Ingestion() {
                     )}
                   </>
                 ))}
-                {files.length === 0 && <tr><td colSpan={7} className="loading">no files yet</td></tr>}
+                {files.length === 0 && <tr><td colSpan={8} className="loading">no files yet</td></tr>}
               </tbody>
             </table>
           </div>
@@ -99,6 +116,25 @@ export default function Ingestion() {
           {!canUpload && <div className="note">Your role ({user.role}) cannot upload files. An administrator can grant this under Administration → Role Management (Ingestion → Insert).</div>}
           {canUpload && (
             <>
+              <div className="fld">
+                <label>Company this data belongs to</label>
+                {pickCos.length === 1
+                  ? <input value={pickCos[0].name} disabled />
+                  : <select value={companyId} onChange={e => chooseCompany(e.target.value === '' ? '' : Number(e.target.value))}>
+                      <option value="">— select a company —</option>
+                      {pickCos.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>}
+                {pickCos.length === 0 && <span className="note">You have no site to upload for. An administrator can assign one under Administration → User Management.</span>}
+              </div>
+              <div className="fld">
+                <label>Site this data belongs to</label>
+                {coSites.length === 1
+                  ? <input value={coSites[0].name} disabled />
+                  : <select value={siteId} disabled={companyId === ''} onChange={e => setSiteId(e.target.value === '' ? '' : Number(e.target.value))}>
+                      <option value="">{companyId === '' ? '— select a company first —' : '— select a site —'}</option>
+                      {coSites.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                    </select>}
+              </div>
               <div className="fld">
                 <label>File (template auto-detected by content, never by extension — FR-I8)</label>
                 <input type="file" ref={fileInput} />
@@ -190,8 +226,10 @@ export default function Ingestion() {
         <div className="note" style={{ marginTop: 10 }}>
           <b>⭳ .xlsx</b> gives you a blank workbook with these exact headers plus a “Petunjuk” sheet
           explaining each column — fill it in and upload it straight back. Columns are matched by
-          header text, so they may be reordered. Bahan Baku and Barang Jadi share an identical
-          14-column header, so those two are told apart by the sheet or file name; every other
+          header text, so they may be reordered. Some reports share an identical header. BC 3.0 and
+          BC 3.3 are told apart by each row’s <b>Jenis Dok.</b> (30 / 33) — keep one type per file.
+          The others (Bahan Baku / Barang Jadi, BC 2.7 Out / BC 2.5 / BC 4.1) are told apart by the
+          sheet name, file name or title row (a downloaded blank already carries it). Every other
           template is identified from its columns alone.
         </div>
       </div>

@@ -1,29 +1,124 @@
 import { Fragment, useEffect, useState } from 'react'
 import {
-  AdminUser, NotifMatrix, NotifSaveRow, RoleMatrix, RolePermRow, adminAddEntity, adminAddPermit,
-  adminAddSite, adminCreateUser, adminMaster, adminResetPassword, adminSetStatus, adminUsers, can,
-  me, notificationSubscriptions, rolePermissions, saveNotificationSubscriptions,
-  saveRolePermissions, setPermissions
+  AdminUser, Company, NotifMatrix, NotifSaveRow, RoleMatrix, RolePermRow, adminAddPermit,
+  adminAddSite, adminCreateUser, adminMaster, adminResetPassword, adminSetSiteReports, adminSetStatus, adminUsers, can,
+  companies as listCompanies, createCompany, getUser, me, notificationSubscriptions, rolePermissions,
+  saveNotificationSubscriptions, saveRolePermissions, setPermissions, setUserCompanies, setUserSites, updateCompany
 } from '../api'
 import { fmtInt } from '../format'
 
 export default function Admin() {
-  const [tab, setTab] = useState<'users' | 'roles' | 'notifications' | 'master'>('users')
+  const [tab, setTab] = useState<'users' | 'companies' | 'roles' | 'notifications' | 'master'>('users')
+  const isSuper = getUser()?.role === 'Super Admin'
   return (
     <>
       <h1 className="page">Administration</h1>
-      <div className="crumb">Users, roles &amp; access scope · page permissions · notification routing · master data governance</div>
+      <div className="crumb">Companies · users, roles &amp; site access · page permissions · notification routing · master data governance</div>
       <div className="chips" style={{ marginBottom: 14 }}>
         <span className={'chk' + (tab === 'users' ? ' on' : '')} onClick={() => setTab('users')}>User Management</span>
+        {isSuper && <span className={'chk' + (tab === 'companies' ? ' on' : '')} onClick={() => setTab('companies')}>Companies</span>}
         <span className={'chk' + (tab === 'roles' ? ' on' : '')} onClick={() => setTab('roles')}>Role Management</span>
         <span className={'chk' + (tab === 'notifications' ? ' on' : '')} onClick={() => setTab('notifications')}>Notifications</span>
         <span className={'chk' + (tab === 'master' ? ' on' : '')} onClick={() => setTab('master')}>Master Data</span>
       </div>
       {tab === 'users' ? <Users />
+        : tab === 'companies' ? <CompaniesTab />
         : tab === 'roles' ? <RoleManagement />
         : tab === 'notifications' ? <NotificationRouting />
         : <Master />}
     </>
+  )
+}
+
+/** Read a File as a base64 payload (data-URI). The backend accepts the whole data-URI. */
+function fileToBase64(file: File): Promise<{ base64: string; type: string }> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve({ base64: String(r.result), type: file.type })
+    r.onerror = reject
+    r.readAsDataURL(file)
+  })
+}
+
+function CompaniesTab() {
+  const [rows, setRows] = useState<Company[]>([])
+  const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [form, setForm] = useState<{ id: number | null; name: string; active: boolean; logo: string | null; logoType: string | null }>(
+    { id: null, name: '', active: true, logo: null, logoType: null })
+  const [busy, setBusy] = useState(false)
+
+  const refresh = () => listCompanies().then(setRows).catch(e => setError(e.message))
+  useEffect(() => { refresh() }, [])
+
+  const edit = (c: Company) => { setForm({ id: c.id, name: c.name, active: c.active, logo: null, logoType: null }); setInfo(''); setError('') }
+  const reset = () => setForm({ id: null, name: '', active: true, logo: null, logoType: null })
+
+  async function pickLogo(f: File | undefined) {
+    if (!f) { setForm(s => ({ ...s, logo: null, logoType: null })); return }
+    if (f.size > 512 * 1024) { setError('Logo must be 512 KB or smaller.'); return }
+    const { base64, type } = await fileToBase64(f)
+    setForm(s => ({ ...s, logo: base64, logoType: type }))
+  }
+
+  async function save() {
+    setBusy(true); setError(''); setInfo('')
+    try {
+      const body = { name: form.name, active: form.active, logoBase64: form.logo, logoContentType: form.logoType }
+      if (form.id) { await updateCompany(form.id, body); setInfo(`Company ${form.name} updated.`) }
+      else { await createCompany(body); setInfo(`Company ${form.name} registered.`) }
+      reset(); refresh()
+    } catch (e: any) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="row2" style={{ gridTemplateColumns: '1.3fr 1fr' }}>
+      <div className="panel">
+        <h3>Companies (PT)</h3>
+        {error && <div className="err" style={{ marginBottom: 10 }}>{error}</div>}
+        {info && <div className="note" style={{ marginBottom: 10 }}>{info}</div>}
+        <div className="gridscroll" style={{ maxHeight: '52vh' }}>
+          <table className="grid">
+            <thead><tr><th>Company</th><th>Logo</th><th>Users</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {rows.map(c => (
+                <tr key={c.id}>
+                  <td><b>{c.name}</b></td>
+                  <td>{c.hasLogo ? <span className="badge b-ok">logo set</span> : <span className="badge b-warn">no logo</span>}</td>
+                  <td className="num">{fmtInt(c.userCount)}</td>
+                  <td><span className={'badge ' + (c.active ? 'b-ok' : 'b-err')}>{c.active ? 'active' : 'inactive'}</span></td>
+                  <td><button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => edit(c)}>Edit</button></td>
+                </tr>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={5} className="loading">no companies yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="panel">
+        <h3>{form.id ? 'Edit company' : 'Register a new company (PT)'}</h3>
+        <div className="fld"><label>Company name</label>
+          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. PT Priscolin" />
+        </div>
+        <div className="fld"><label>Logo (PNG, JPEG, SVG or WebP · ≤512 KB · shown in the header for this company's users)</label>
+          <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" onChange={e => pickLogo(e.target.files?.[0])} />
+          {form.logo && <div style={{ marginTop: 8 }}><img src={form.logo} alt="preview" style={{ maxHeight: 48, maxWidth: 180 }} /></div>}
+          {form.id && !form.logo && <div className="note" style={{ marginTop: 6 }}>Leave empty to keep the current logo.</div>}
+        </div>
+        <div className="fld"><label>Status</label>
+          <select value={form.active ? 'active' : 'inactive'} onChange={e => setForm({ ...form, active: e.target.value === 'active' })}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive (hidden from upload / assignment)</option>
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn p" onClick={save} disabled={busy || !form.name.trim()}>{busy ? 'Saving…' : form.id ? 'Save changes' : 'Register company'}</button>
+          {form.id && <button className="btn o" onClick={reset} disabled={busy}>New</button>}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -198,14 +293,14 @@ function RoleManagement() {
     .catch(e => setError(e.message))
   useEffect(() => { load() }, [])
 
-  function toggle(role: string, page: string, action: 'view' | 'insert' | 'edit' | 'delete') {
+  function toggle(role: string, page: string, action: 'view' | 'insert' | 'edit' | 'delete' | 'export') {
     setDraft(d => {
       const rows = d[role].map(r => {
         if (r.page !== page) return r
         const next = { ...r, [action]: !r[action] }
-        // insert/edit/delete imply view — a page you cannot open cannot be acted on
-        if ((action === 'insert' || action === 'edit' || action === 'delete') && next[action]) next.view = true
-        if (action === 'view' && !next.view) { next.insert = false; next.edit = false; next.delete = false }
+        // every action implies view — a page you cannot open cannot be acted on
+        if (action !== 'view' && next[action]) next.view = true
+        if (action === 'view' && !next.view) { next.insert = false; next.edit = false; next.delete = false; next.export = false }
         return next
       })
       return { ...d, [role]: rows }
@@ -266,12 +361,13 @@ function RoleManagement() {
                 <th style={{ width: 90 }}>Insert</th>
                 <th style={{ width: 90 }}>Edit</th>
                 <th style={{ width: 90 }}>Delete</th>
-                <th>What insert / edit / delete control</th>
+                <th style={{ width: 90 }}>Export</th>
+                <th>What insert / edit / delete / export control</th>
               </tr></thead>
               <tbody>
                 {data.pages.map(p => {
                   const row = draft[r.role]?.find(x => x.page === p.key)
-                    ?? { page: p.key, view: false, insert: false, edit: false, delete: false }
+                    ?? { page: p.key, view: false, insert: false, edit: false, delete: false, export: false }
                   const disabled = r.locked || !data.canEdit
                   return (
                     <tr key={p.key}>
@@ -290,8 +386,13 @@ function RoleManagement() {
                         ? <input type="checkbox" checked={row.delete} disabled={disabled}
                           onChange={() => toggle(r.role, p.key, 'delete')} />
                         : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
+                      <td>{p.hasExport
+                        ? <input type="checkbox" checked={row.export} disabled={disabled}
+                          onChange={() => toggle(r.role, p.key, 'export')} />
+                        : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                       <td style={{ color: 'var(--muted)', fontSize: 11.5, whiteSpace: 'normal' }}>
-                        {[p.insertMeans && `Insert: ${p.insertMeans}`, p.editMeans && `Edit: ${p.editMeans}`, p.deleteMeans && `Delete: ${p.deleteMeans}`]
+                        {[p.insertMeans && `Insert: ${p.insertMeans}`, p.editMeans && `Edit: ${p.editMeans}`,
+                          p.deleteMeans && `Delete: ${p.deleteMeans}`, p.exportMeans && `Export: ${p.exportMeans}`]
                           .filter(Boolean).join(' · ') || 'view only'}
                       </td>
                     </tr>
@@ -304,38 +405,128 @@ function RoleManagement() {
       ))}
       <div className="note">
         Permissions are enforced by the API, not just hidden in the UI — a revoked page returns 403
-        even if called directly. Ticking Insert, Edit or Delete automatically grants View, since a page you
+        even if called directly. Ticking Insert, Edit, Delete or Export automatically grants View, since a page you
         cannot open cannot be acted on. Delete permanently removes ingested report rows and is
-        off for every role except Super Admin by default. Every change is audited and alerts the administrators.
+        off for every role except Super Admin by default. Export controls the Excel / CSV download buttons —
+        untick it to let a role read the data on screen without taking a copy. Every change is audited and alerts the administrators.
       </div>
     </>
+  )
+}
+
+type SiteOpt = { id: number; companyId: number | null; name: string }
+
+/**
+ * Tick the sites a user is linked to, grouped by company — only the companies the user is
+ * assigned to are offered. "All sites" (Super-Admin-granted) covers every site of those companies.
+ */
+function SiteChecklist({ cos, sites, allSites, siteIds, canGrantAll, onChange }:
+  { cos: Company[]; sites: SiteOpt[]; allSites: boolean; siteIds: number[]; canGrantAll: boolean
+    onChange: (allSites: boolean, siteIds: number[]) => void }) {
+  const toggle = (id: number) => onChange(false, siteIds.includes(id) ? siteIds.filter(x => x !== id) : [...siteIds, id])
+  return (
+    <div>
+      {(canGrantAll || allSites) && (
+        <label className="cochk" style={{ display: 'flex', margin: '0 0 6px' }}>
+          <input type="checkbox" checked={allSites} disabled={!canGrantAll} onChange={e => onChange(e.target.checked, [])} />
+          All sites of the assigned company/companies
+        </label>
+      )}
+      {!allSites && cos.map(c => {
+        const cs = sites.filter(st => st.companyId === c.id)
+        return (
+          <div key={c.id} style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
+            <div className="cosel">
+              {cs.map(st => (
+                <label key={st.id} className="cochk">
+                  <input type="checkbox" checked={siteIds.includes(st.id)} onChange={() => toggle(st.id)} /> {st.name}
+                </label>
+              ))}
+              {cs.length === 0 && <span className="note">No sites yet — add one in the Master Data tab.</span>}
+            </div>
+          </div>
+        )
+      })}
+      {!allSites && cos.length === 0 && <span className="note">Choose a company first to list its sites.</span>}
+    </div>
   )
 }
 
 function Users() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [roles, setRoles] = useState<string[]>([])
+  const [cos, setCos] = useState<Company[]>([])
+  const [sites, setSites] = useState<SiteOpt[]>([])
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
-  const [form, setForm] = useState({ email: '', fullName: '', role: 'Site BC User', allEntities: false, entityId: '1', password: '' })
+  const [form, setForm] = useState({ email: '', fullName: '', role: 'Site BC User', allSites: false, siteIds: [] as number[], password: '', companyIds: [] as number[] })
   const [showForm, setShowForm] = useState(false)
+  const [editCosFor, setEditCosFor] = useState<number | null>(null)
+  const [editCos, setEditCos] = useState<number[]>([])
+  const [editSitesFor, setEditSitesFor] = useState<number | null>(null)
+  const [editSites, setEditSites] = useState<{ allSites: boolean; siteIds: number[] }>({ allSites: false, siteIds: [] })
+  const iAmSuper = getUser()?.role === 'Super Admin'
 
-  const refresh = () => adminUsers().then(d => { setUsers(d.users); setRoles(d.roles) }).catch(e => setError(e.message))
+  const refresh = () => {
+    adminUsers().then(d => { setUsers(d.users); setRoles(d.roles) }).catch(e => setError(e.message))
+    listCompanies().then(setCos).catch(() => { /* non-fatal */ })
+    adminMaster().then((d: any) => setSites(d.sites ?? [])).catch(() => { /* non-fatal */ })
+  }
   useEffect(() => { refresh() }, [])
+
+  const activeCos = cos.filter(c => c.active)
+  const isSuperForm = form.role === 'Super Admin'
+  const siteName = (id: number) => sites.find(st => st.id === id)?.name
+  // A site belongs to a company: unticking a company drops its sites from the selection.
+  const keepSitesOf = (companyIds: number[], siteIds: number[]) =>
+    siteIds.filter(id => companyIds.includes(sites.find(st => st.id === id)?.companyId ?? -1))
+  const toggleFormCompany = (id: number) => setForm(f => {
+    const companyIds = f.companyIds.includes(id) ? f.companyIds.filter(x => x !== id) : [...f.companyIds, id]
+    return { ...f, companyIds, siteIds: keepSitesOf(companyIds, f.siteIds) }
+  })
 
   async function create() {
     setError(''); setInfo('')
     try {
       await adminCreateUser({
         email: form.email, fullName: form.fullName, role: form.role,
-        allEntities: form.allEntities,
-        entityId: form.allEntities ? null : Number(form.entityId), siteId: null,
-        password: form.password
+        allSites: form.allSites, siteIds: form.allSites ? [] : form.siteIds,
+        password: form.password,
+        companyIds: isSuperForm ? [] : form.companyIds
       })
       setInfo(`User ${form.email} created.`)
       setShowForm(false)
-      setForm({ ...form, email: '', fullName: '', password: '' })
+      setForm({ ...form, email: '', fullName: '', password: '', companyIds: [], siteIds: [], allSites: false })
       refresh()
+    } catch (e: any) { setError(e.message) }
+  }
+
+  function openCompanyEdit(u: AdminUser) {
+    if (editCosFor === u.id) { setEditCosFor(null); return }
+    setEditCosFor(u.id); setEditSitesFor(null); setEditCos(u.companyIds ?? []); setError(''); setInfo('')
+  }
+  async function saveCompanyEdit(u: AdminUser) {
+    setError('')
+    const dropped = (u.siteIds ?? []).filter(id => !keepSitesOf(editCos, [id]).length).map(siteName)
+    if (dropped.length && !window.confirm(`This also removes ${u.email} from site(s) ${dropped.join(', ')}. Continue?`)) return
+    try { await setUserCompanies(u.id, editCos); setInfo('Company assignment updated.'); setEditCosFor(null); refresh() }
+    catch (e: any) { setError(e.message) }
+  }
+  const toggleEditCompany = (cid: number) =>
+    setEditCos(cs => cs.includes(cid) ? cs.filter(x => x !== cid) : [...cs, cid])
+
+  function openSitesEdit(u: AdminUser) {
+    if (editSitesFor === u.id) { setEditSitesFor(null); return }
+    setEditSitesFor(u.id); setEditCosFor(null)
+    setEditSites({ allSites: u.allSites, siteIds: u.siteIds ?? [] })
+    setError(''); setInfo('')
+  }
+  async function saveSitesEdit(u: AdminUser) {
+    setError('')
+    try {
+      await setUserSites(u.id, editSites.allSites, editSites.allSites ? [] : editSites.siteIds)
+      setInfo(`Sites updated for ${u.email}.`); setEditSitesFor(null); refresh()
     } catch (e: any) { setError(e.message) }
   }
 
@@ -370,35 +561,85 @@ function Users() {
               {roles.map(r => <option key={r}>{r}</option>)}
             </select>
           </div>
-          <div className="f"><label>Scope</label>
-            <select value={form.allEntities ? 'all' : 'entity'} onChange={e => setForm({ ...form, allEntities: e.target.value === 'all' })}>
-              <option value="entity">Entity #1 (PT EUP)</option>
-              <option value="all">All entities (Super Admin only)</option>
-            </select>
-          </div>
           <div className="f"><label>Initial password</label><input type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
+          {isSuperForm
+            ? <div className="f" style={{ flexBasis: '100%' }}><label>Companies &amp; sites</label><span className="note">A Super Admin spans every site of every company automatically.</span></div>
+            : <>
+                <div className="f" style={{ flexBasis: '100%' }}><label>Companies (assign at least one)</label>
+                  <div className="cosel">
+                    {activeCos.map(c => (
+                      <label key={c.id} className="cochk">
+                        <input type="checkbox" checked={form.companyIds.includes(c.id)} onChange={() => toggleFormCompany(c.id)} /> {c.name}
+                      </label>
+                    ))}
+                    {activeCos.length === 0 && <span className="note">No active companies — register one in the Companies tab first.</span>}
+                  </div>
+                </div>
+                <div className="f" style={{ flexBasis: '100%' }}><label>Sites (assign at least one) — decides which rows, reports &amp; columns the user sees</label>
+                  <SiteChecklist cos={activeCos.filter(c => form.companyIds.includes(c.id))} sites={sites}
+                    allSites={form.allSites} siteIds={form.siteIds} canGrantAll={iAmSuper}
+                    onChange={(allSites, siteIds) => setForm({ ...form, allSites, siteIds })} />
+                </div>
+              </>}
           <button className="btn p" onClick={create}>Create</button>
         </div>
       )}
       <div className="gridscroll">
         <table className="grid">
-          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Scope</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Companies</th><th>Sites</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {users.map(u => (
-              <tr key={u.id}>
+            {users.map(u => {
+              const superU = u.role === 'Super Admin'
+              return (
+              <Fragment key={u.id}>
+              <tr>
                 <td>{u.fullName}</td>
                 <td>{u.email}</td>
                 <td>{u.role}</td>
-                <td>{u.allEntities ? 'All entities' : `${u.entityName ?? 'entity #' + u.entityId}${u.siteName ? ' · ' + u.siteName : ''}`}</td>
+                <td style={{ whiteSpace: 'normal' }}>{superU ? <span style={{ color: 'var(--muted)' }}>All companies</span> : (u.companyNames || <span className="badge b-warn">none</span>)}</td>
+                <td style={{ whiteSpace: 'normal' }}>{u.allSites ? <span style={{ color: 'var(--muted)' }}>All sites</span> : (u.siteNames || <span className="badge b-warn">none</span>)}</td>
                 <td><span className={'badge ' + (u.status === 'active' ? 'b-ok' : 'b-err')}>{u.status}</span></td>
-                <td>
+                <td style={{ whiteSpace: 'nowrap' }}>
                   <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => toggleStatus(u)}>
                     {u.status === 'active' ? 'Disable' : 'Enable'}
                   </button>
-                  <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => reset(u)}>Reset</button>
+                  <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => reset(u)}>Reset</button>
+                  {!superU && <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5, marginRight: 6 }} onClick={() => openCompanyEdit(u)}>
+                    {editCosFor === u.id ? 'Close' : 'Companies'}
+                  </button>}
+                  {!superU && <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }} onClick={() => openSitesEdit(u)}>
+                    {editSitesFor === u.id ? 'Close' : 'Sites'}
+                  </button>}
                 </td>
               </tr>
-            ))}
+              {editSitesFor === u.id && (
+                <tr>
+                  <td colSpan={7} style={{ background: '#f6f8fa', whiteSpace: 'normal' }}>
+                    <SiteChecklist cos={cos.filter(c => (u.companyIds ?? []).includes(c.id))} sites={sites}
+                      allSites={editSites.allSites} siteIds={editSites.siteIds} canGrantAll={iAmSuper}
+                      onChange={(allSites, siteIds) => setEditSites({ allSites, siteIds })} />
+                    <button className="btn p" style={{ padding: '4px 12px', fontSize: 12, marginTop: 6 }}
+                      disabled={!editSites.allSites && editSites.siteIds.length === 0}
+                      onClick={() => saveSitesEdit(u)}>Save sites</button>
+                  </td>
+                </tr>
+              )}
+              {editCosFor === u.id && (
+                <tr>
+                  <td colSpan={7} style={{ background: '#f6f8fa', whiteSpace: 'normal' }}>
+                    <div className="cosel" style={{ marginBottom: 8 }}>
+                      {activeCos.map(c => (
+                        <label key={c.id} className="cochk">
+                          <input type="checkbox" checked={editCos.includes(c.id)} onChange={() => toggleEditCompany(c.id)} /> {c.name}
+                        </label>
+                      ))}
+                    </div>
+                    <button className="btn p" style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => saveCompanyEdit(u)}>Save assignment</button>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+            )})}
           </tbody>
         </table>
       </div>
@@ -408,13 +649,15 @@ function Users() {
 
 function Master() {
   const [data, setData] = useState<any>(null)
+  const [cos, setCos] = useState<Company[]>([])
   const [error, setError] = useState('')
-  const [ent, setEnt] = useState({ code: '', name: '' })
-  const [site, setSite] = useState({ entityId: '1', name: '' })
-  const [permit, setPermit] = useState({ entityId: '1', permitNo: '' })
 
-  const refresh = () => adminMaster().then(setData).catch(e => setError(e.message))
+  const refresh = () => {
+    adminMaster().then(setData).catch(e => setError(e.message))
+    listCompanies().then(setCos).catch(() => { /* non-fatal */ })
+  }
   useEffect(() => { refresh() }, [])
+  const activeCos = cos.filter(c => c.active)
 
   async function run(fn: () => Promise<any>) {
     setError('')
@@ -424,54 +667,238 @@ function Master() {
   if (error && !data) return <div className="err">{error}</div>
   if (!data) return <div className="loading"><span className="spin" />loading…</div>
 
+  // The Company → Sites/Permits tree. Companies come from the Companies tab.
+  const sitesOf = (companyId: number) => data.sites.filter((s: any) => s.companyId === companyId)
+  // Show every active company, plus any (inactive) company that still owns sites.
+  const shownCos = [...activeCos, ...cos.filter(c => !c.active && sitesOf(c.id).length > 0)]
+
   return (
     <>
       {error && <div className="err" style={{ marginBottom: 12 }}>{error}</div>}
-      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <div className="panel">
-          <h3>Entities (PT)</h3>
-          {data.entities.map((e: any) => <div className="item" key={e.id}><span><b>{e.code}</b> — {e.name}</span></div>)}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <input placeholder="Code" style={{ width: 90 }} value={ent.code} onChange={e => setEnt({ ...ent, code: e.target.value })} className="f-input" />
-            <input placeholder="Name" style={{ flex: 1 }} value={ent.name} onChange={e => setEnt({ ...ent, name: e.target.value })} />
-            <button className="btn p" onClick={() => run(() => adminAddEntity(ent.code, ent.name))}>Add</button>
-          </div>
-        </div>
-        <div className="panel">
-          <h3>Sites</h3>
-          {data.sites.map((s: any) => <div className="item" key={s.id}><span>{s.name} <small style={{ color: 'var(--muted)' }}>({s.entityName})</small></span></div>)}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <select value={site.entityId} onChange={e => setSite({ ...site, entityId: e.target.value })}>
-              {data.entities.map((e: any) => <option key={e.id} value={e.id}>{e.code}</option>)}
-            </select>
-            <input placeholder="Site name" style={{ flex: 1 }} value={site.name} onChange={e => setSite({ ...site, name: e.target.value })} />
-            <button className="btn p" onClick={() => run(() => adminAddSite(Number(site.entityId), site.name))}>Add</button>
-          </div>
-        </div>
+      <div className="note" style={{ marginBottom: 12 }}>
+        Company → Sites &amp; TPB permits. Users are linked to sites in User Management; a site decides which rows, reports and columns its users see.
+        Use <b>Reports</b> on a site to choose which reports — and which columns of each — its users see on Reports and Inventory Movement.
+        TPB permits also auto-register from ingestion; test entries are blocked on save (FR-A4).
       </div>
-      <div className="panel">
-        <h3>TPB permits <small style={{ color: 'var(--muted)', fontWeight: 400 }}>· auto-registered from ingestion; test entries blocked on save (FR-A4)</small></h3>
-        <div className="gridscroll" style={{ maxHeight: '38vh' }}>
-          <table className="grid">
-            <thead><tr><th>TPB Permit No</th><th>Entity</th><th>Site</th><th>Documents</th></tr></thead>
-            <tbody>
-              {data.permits.map((p: any) => (
-                <tr key={p.id}>
-                  <td>{p.permitNo}</td><td>{p.entityName}</td><td>{p.siteName ?? '—'}</td>
-                  <td className="num">{fmtInt(p.documents)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+      {shownCos.map(c => (
+        <div className="panel" key={c.id} style={{ marginBottom: 14 }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {c.name}
+            {!c.active && <span className="badge b-warn">inactive</span>}
+            <small style={{ color: 'var(--muted)', fontWeight: 400 }}>· {sitesOf(c.id).length} site{sitesOf(c.id).length === 1 ? '' : 's'}</small>
+          </h3>
+          <CompanyNode company={c}
+            sites={sitesOf(c.id)}
+            permits={data.permits.filter((p: any) => p.companyId === c.id)}
+            reports={data.reports ?? []} siteReports={data.siteReports ?? {}} siteColumns={data.siteColumns ?? {}}
+            run={run} />
         </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-          <select value={permit.entityId} onChange={e => setPermit({ ...permit, entityId: e.target.value })}>
-            {data.entities.map((e: any) => <option key={e.id} value={e.id}>{e.code}</option>)}
-          </select>
-          <input placeholder="Permit no (e.g. 99/MK/WBC.16/2026)" style={{ flex: 1 }} value={permit.permitNo} onChange={e => setPermit({ ...permit, permitNo: e.target.value })} />
-          <button className="btn p" onClick={() => run(() => adminAddPermit(Number(permit.entityId), null, permit.permitNo))}>Add</button>
-        </div>
-      </div>
+      ))}
     </>
+  )
+}
+
+type SiteReportField = { name: string; label: string; group: string; optIn: boolean }
+type SiteReport = { key: string; title: string; page: 'reports' | 'movement'; fields: SiteReportField[] }
+/** The columns a site starts from for a report: everything except opt-in columns. */
+const starterColumns = (r: SiteReport) => r.fields.filter(f => !f.optIn).map(f => f.name)
+const REPORT_PAGES: { page: SiteReport['page']; title: string }[] = [
+  { page: 'reports', title: 'Reports' },
+  { page: 'movement', title: 'Inventory Movement' },
+]
+
+/** One company in the Master-data tree: its sites and TPB permits, each with an inline add control. */
+function CompanyNode({ company, sites, permits, reports, siteReports, siteColumns, run }:
+  { company: Company; sites: any[]; permits: any[]; reports: SiteReport[]; siteReports: Record<string, string[]>
+    siteColumns: Record<string, Record<string, string[]>>; run: (fn: () => Promise<any>) => Promise<void> }) {
+  const [siteName, setSiteName] = useState('')
+  const [reportsFor, setReportsFor] = useState<number | null>(null)
+
+  // Per page, nothing ticked means every report on that page is shown.
+  const summary = (keys: string[]) => REPORT_PAGES.map(pg => {
+    const all = reports.filter(r => r.page === pg.page)
+    const n = all.filter(r => keys.includes(r.key)).length
+    return `${pg.title}: ${n === 0 ? 'all' : `${n} of ${all.length}`}`
+  }).join(' · ')
+  const [permitNo, setPermitNo] = useState('')
+  const [permitSite, setPermitSite] = useState('')
+
+  return (
+    <div className="row2" style={{ gridTemplateColumns: '1.6fr 1fr', gap: 14 }}>
+      <div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>Sites</div>
+        {sites.map(s => {
+          const keys = siteReports[String(s.id)] ?? []
+          return (
+            <Fragment key={s.id}>
+              <div className="item" style={{ alignItems: 'center', gap: 8 }}>
+                <span>{s.name} <small style={{ color: 'var(--muted)' }}>· {fmtInt(s.users)} user{s.users === 1 ? '' : 's'}</small>
+                  <br /><small style={{ color: 'var(--muted)' }}>{summary(keys)}</small></span>
+                {can('admin', 'edit') && (
+                  <button className="btn o" style={{ padding: '3px 9px', fontSize: 11.5 }}
+                    onClick={() => setReportsFor(reportsFor === s.id ? null : s.id)}>
+                    {reportsFor === s.id ? 'Close' : 'Reports'}
+                  </button>
+                )}
+              </div>
+              {reportsFor === s.id && (
+                <SiteReportsEditor site={s} reports={reports} initial={keys} initialColumns={siteColumns[String(s.id)] ?? {}}
+                  onSave={(next, cols) => run(async () => { await adminSetSiteReports(s.id, next, cols); setReportsFor(null) })} />
+              )}
+            </Fragment>
+          )
+        })}
+        {sites.length === 0 && <div className="note" style={{ marginBottom: 4 }}>No sites yet.</div>}
+        {company.active && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <input placeholder="Site name (e.g. BONTANG)" style={{ flex: 1 }} value={siteName} onChange={e => setSiteName(e.target.value)} />
+            <button className="btn o" disabled={!siteName} style={{ padding: '4px 10px', fontSize: 12 }}
+              onClick={() => run(async () => { await adminAddSite(company.id, siteName); setSiteName('') })}>+ Site</button>
+          </div>
+        )}
+      </div>
+      <div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>TPB permits</div>
+        {permits.map(p => (
+          <div className="item" key={p.id}>
+            <span>{p.permitNo} {p.siteName && <small style={{ color: 'var(--muted)' }}>· {p.siteName}</small>}</span>
+            <small style={{ color: 'var(--muted)' }}>{fmtInt(p.documents)} docs</small>
+          </div>
+        ))}
+        {permits.length === 0 && <div className="note" style={{ marginBottom: 4 }}>No permits.</div>}
+        {company.active && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+            <input placeholder="Permit no (e.g. 99/MK/WBC.16/2026)" style={{ flex: 1, minWidth: 150 }} value={permitNo} onChange={e => setPermitNo(e.target.value)} />
+            <select value={permitSite} onChange={e => setPermitSite(e.target.value)}>
+              <option value="">Company-level</option>
+              {sites.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+            </select>
+            <button className="btn o" disabled={!permitNo} style={{ padding: '4px 10px', fontSize: 12 }}
+              onClick={() => run(async () => { await adminAddPermit(company.id, permitSite ? Number(permitSite) : null, permitNo); setPermitNo(''); setPermitSite('') })}>+ Permit</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Pick the reports a site's users see on Reports and Inventory Movement, and the columns of each.
+ * Each page is decided on its own: leaving a page with nothing ticked keeps every report on it
+ * visible. Columns start from the report's starter set; opt-in columns can be switched on.
+ */
+function SiteReportsEditor({ site, reports, initial, initialColumns, onSave }:
+  { site: { id: number; name: string }; reports: SiteReport[]; initial: string[]
+    initialColumns: Record<string, string[]>; onSave: (keys: string[], columns: Record<string, string[]>) => Promise<void> }) {
+  const [keys, setKeys] = useState<string[]>(initial)
+  // Only customised reports are held here; a report absent from the map uses its starter set.
+  const [columns, setColumns] = useState<Record<string, string[]>>(initialColumns)
+  const [colsFor, setColsFor] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const colsOf = (r: SiteReport) => columns[r.key] ?? starterColumns(r)
+  const setColsOf = (r: SiteReport, next: string[]) => setColumns(c => ({ ...c, [r.key]: next }))
+  const toggle = (k: string) => setKeys(ks => ks.includes(k) ? ks.filter(x => x !== k) : [...ks, k])
+  const setPage = (page: string, on: boolean) => {
+    const pageKeys = reports.filter(r => r.page === page).map(r => r.key)
+    setKeys(ks => on ? [...new Set([...ks, ...pageKeys])] : ks.filter(k => !pageKeys.includes(k)))
+  }
+  async function save() {
+    setSaving(true)
+    try { await onSave(keys, columns) } finally { setSaving(false) }
+  }
+
+  return (
+    <div style={{ background: '#f6f8fa', border: '1px solid var(--line)', borderRadius: 6, padding: 10, margin: '4px 0 8px' }}>
+      <div style={{ fontSize: 12, marginBottom: 8 }}>
+        Reports shown to users of <b>{site.name}</b>. Leave a page with nothing ticked to show all of its reports.
+      </div>
+      <div className="row2" style={{ gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {REPORT_PAGES.map(pg => {
+          const list = reports.filter(r => r.page === pg.page)
+          const n = list.filter(r => keys.includes(r.key)).length
+          return (
+            <div key={pg.page}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <b style={{ fontSize: 12 }}>{pg.title}</b>
+                <small style={{ color: 'var(--muted)' }}>
+                  {n === 0 ? 'all shown' : `${n} of ${list.length}`}
+                  {' · '}<a style={{ cursor: 'pointer' }} onClick={() => setPage(pg.page, n !== list.length)}>{n === list.length ? 'clear' : 'tick all'}</a>
+                </small>
+              </div>
+              {list.map(r => {
+                const shown = colsOf(r)
+                const custom = r.key in columns && !sameSet(shown, starterColumns(r))
+                return (
+                  <Fragment key={r.key}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '2px 0' }}>
+                      <label className="cochk" style={{ display: 'flex', flex: 1, margin: 0, fontSize: 12 }}>
+                        <input type="checkbox" checked={keys.includes(r.key)} onChange={() => toggle(r.key)} /> {r.title}
+                      </label>
+                      <a style={{ cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap' }}
+                        title="Choose which columns this site sees"
+                        onClick={() => setColsFor(colsFor === r.key ? null : r.key)}>
+                        {colsFor === r.key ? 'close' : `columns ${shown.length}/${r.fields.length}`}{custom ? ' ●' : ''}
+                      </a>
+                    </div>
+                    {colsFor === r.key && (
+                      <ColumnPicker report={r} shown={shown} onChange={next => setColsOf(r, next)} />
+                    )}
+                  </Fragment>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+      <button className="btn p" style={{ padding: '4px 12px', fontSize: 12, marginTop: 8 }} disabled={saving} onClick={save}>
+        {saving ? 'Saving…' : 'Save reports'}
+      </button>
+    </div>
+  )
+}
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every(x => b.includes(x))
+
+/**
+ * The columns one site sees for one report, grouped as the upload template groups them. Opt-in
+ * columns (e.g. BC 2.7 Out's Dokumen Asal Barang) start unticked.
+ */
+function ColumnPicker({ report, shown, onChange }:
+  { report: SiteReport; shown: string[]; onChange: (next: string[]) => void }) {
+  const groups = [...new Set(report.fields.map(f => f.group))]
+  const toggle = (name: string) => onChange(shown.includes(name) ? shown.filter(x => x !== name) : [...shown, name])
+  const setGroup = (g: string, on: boolean) => {
+    const names = report.fields.filter(f => f.group === g).map(f => f.name)
+    onChange(on ? [...new Set([...shown, ...names])] : shown.filter(x => !names.includes(x)))
+  }
+  const isStarter = sameSet(shown, starterColumns(report))
+  return (
+    <div style={{ background: '#fff', border: '1px dashed var(--line)', borderRadius: 6, padding: 8, margin: '2px 0 8px 18px', fontSize: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span>{shown.length} of {report.fields.length} columns {isStarter ? <small style={{ color: 'var(--muted)' }}>(starter)</small> : <span className="badge b-warn">custom</span>}</span>
+        {!isStarter && <a style={{ cursor: 'pointer' }} onClick={() => onChange(starterColumns(report))}>reset to starter</a>}
+      </div>
+      {groups.map(g => {
+        const fs = report.fields.filter(f => f.group === g)
+        const all = fs.every(f => shown.includes(f.name))
+        const optIn = fs.some(f => f.optIn)
+        return (
+          <div key={g} style={{ marginTop: 4 }}>
+            <label className="cochk" style={{ display: 'flex', margin: 0, fontWeight: 600 }}>
+              <input type="checkbox" checked={all} onChange={() => setGroup(g, !all)} /> {g || 'Other'}
+              {optIn && <span className="badge b-ok" style={{ marginLeft: 6 }}>optional</span>}
+            </label>
+            {fs.map(f => (
+              <label key={f.name} className="cochk" style={{ display: 'flex', margin: '1px 0 1px 18px' }} title={`upload field: ${f.name}`}>
+                <input type="checkbox" checked={shown.includes(f.name)}
+                  disabled={shown.length === 1 && shown.includes(f.name)}
+                  onChange={() => toggle(f.name)} /> {f.label.startsWith(g + ' / ') ? f.label.slice(g.length + 3) : f.label}
+              </label>
+            ))}
+          </div>
+        )
+      })}
+    </div>
   )
 }

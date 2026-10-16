@@ -18,7 +18,7 @@ Then open **http://localhost:8088**
 
 | Account | Password | Role / scope |
 |---|---|---|
-| admin@energi-up.com | Admin123! | Super Admin, all entities |
+| admin@energi-up.com | Admin123! | Super Admin, all sites |
 | bc.bontang@energi-up.com | Bontang123! | Site BC User, PT EUP · Bontang (scope-locked) |
 
 These local-dev defaults, and the credential hint on the sign-in page, appear **only in a
@@ -27,14 +27,15 @@ sample extracts from `docs/` through the real parser pipeline, so every screen i
 
 ## Reports
 
-Fourteen reports across two pages. Twelve own an upload template; two (Laporan Sparepart and
+Fifteen reports across two pages. Thirteen own an upload template; two (Laporan Sparepart and
 Laporan Aset) are **views** over the Aset dan Sparepart upload rather than separate files.
 
 | Report | Template | Page | Format / note |
 |---|---|---|---|
 | Pemasukan Barang — PIB Import (BC 2.3) | BC23 | Reports | tab-separated text (.xls) |
 | Pemasukan Barang — BC 4.0 | BC40 | Reports | HTML table (.xls) |
-| Pengeluaran Barang — BC 3.0 (PEB) | BC30 | Reports | XLSX, 2-row merged header |
+| Pengeluaran Barang — BC 3.0 (PEB) | BC30 | Reports | XLSX, 2-row merged header; rows with Jenis Dok. 30 |
+| Pengeluaran Barang — BC 3.3 | BC33 | Reports | XLSX — same layout as BC 3.0; rows with Jenis Dok. 33 (a file mixing 30 and 33 is rejected; with no code, the "BC 3.3" name hint decides, else BC 3.0) |
 | Pemasukan Barang — BC 2.7 | BC27IN | Reports | XLSX |
 | Pengeluaran Barang — BC 2.7 | BC27OUT | Reports | XLSX — shared layout |
 | Pengeluaran Barang — BC 2.5 | BC25 | Reports | XLSX — shared layout |
@@ -62,7 +63,7 @@ upload template with its columns and load count, and offers a blank `.xlsx` per 
 
 ## What's implemented
 
-- **Auth & sessions** — JWT login (BCrypt), role + entity/site scope enforced server-side. Every
+- **Auth & sessions** — JWT login (BCrypt), role + company/site scope enforced server-side. Every
   request re-reads the account, so disabling it, demoting the role, narrowing scope or resetting
   the password ends the session within seconds rather than at token expiry. Token lifetime 120 min
   (configurable). Sign-in is rate-limited with per-account lockout.
@@ -72,7 +73,7 @@ upload template with its columns and load count, and offers a blank `.xlsx` per 
 - **Ingestion** — format sniffing by content (BC23 TSV, BC40 HTML, XLSX), header-fingerprint
   identification, quarantine with reasons, duplicate-hash idempotency, per-period upsert, manual
   upload with a 100 MB cap.
-- **Dashboard** — KPIs (entity-scoped), per-month trend by template, latest ingestions.
+- **Dashboard** — KPIs (site-scoped), per-month trend by template, latest ingestions.
 - **Exports** — Excel (.xlsx, typed cells, text identifiers keep leading zeros) and CSV, honouring
   the grid's visible columns, order and sort. Indonesian number and date formatting throughout.
 - **Notifications** — in-app bell + e-mail. Per-user, per-event routing managed in Administration →
@@ -80,7 +81,7 @@ upload template with its columns and load count, and offers a blank `.xlsx` per 
   with independent in-app and e-mail channels; users with no explicit setting fall back to the
   event's default roles. E-mail is sent over STARTTLS when a relay is configured.
 - **Admin** — user management (create with role + scope, disable/enable, password reset; no hard
-  delete), master data (entities / sites / TPB permits) with duplicate and test-entry blocking,
+  delete), master data (company → sites / TPB permits, per-site reports & columns) with duplicate and test-entry blocking,
   role management (role × page × view/insert/edit matrix), notification routing. Password policy:
   ≥10 chars, some variety, no obvious words or the account's own address.
 - **Audit** — append-only `audit.audit_events`, enforced by database triggers that reject UPDATE,

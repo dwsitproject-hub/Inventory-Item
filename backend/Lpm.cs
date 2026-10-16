@@ -10,9 +10,15 @@ namespace BcInventory.Api;
 /// </summary>
 public static class Lpm
 {
+    // Guard a JSONB cast so one malformed cell cannot 500 the whole page (mirrors Reports.Expr):
+    // a value that does not look like a number / ISO date evaluates to NULL instead of throwing
+    // "invalid input syntax". `expr` is the underlying JSONB expression, e.g. l.data->>'BC / Qty'.
+    static string Num(string expr) => $"(case when btrim({expr}) ~ '^-?[0-9]+(\\.[0-9]+)?$' then btrim({expr})::numeric end)";
+    static string Dt(string expr) => $"(case when {expr} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}' then ({expr})::date end)";
+
     public static async Task<IResult> Saldo(NpgsqlDataSource ds, UserScope scope, string? search, int? limit)
     {
-        var scopeAnd = scope.AllEntities ? "" : " and l.entity_id = @scopeEntity";
+        var scopeAnd = Sites.RowFilter(scope);
         var searchAnd = string.IsNullOrWhiteSpace(search) ? "" :
             " and (coalesce(l.data->>'Material Code', l.data->>'Material / Code') ilike @search" +
             " or coalesce(l.data->>'Commodity', l.data->>'Material / Description') ilike @search)";
@@ -24,8 +30,8 @@ public static class Lpm
                        min(coalesce(l.data->>'Unit', l.data->>'BC / UOM')) as uom,
                        date_trunc('month', l.doc_date)::date as month,
                        sum(coalesce(
-                           nullif(l.data->>'Qty','')::numeric,
-                           nullif(l.data->>'BC / Qty','')::numeric, 0)) as qty_in,
+                           {Num("l.data->>'Qty'")},
+                           {Num("l.data->>'BC / Qty'")}, 0)) as qty_in,
                        count(*) as line_count
                 from bc.document_lines l
                 where l.doc_date is not null
@@ -49,7 +55,8 @@ public static class Lpm
         await using var con = await ds.OpenConnectionAsync();
         var rows = (await con.QueryAsync(sql, new
         {
-            scopeEntity = scope.EntityId,
+            scopeSites = scope.SiteIds,
+            scopeCompanies = scope.CompanyIds,
             search = "%" + (search ?? "").Trim() + "%",
             limit = Math.Clamp(limit ?? 500, 1, 2000)
         })).ToList();
@@ -59,25 +66,25 @@ public static class Lpm
     /// <summary>BC 4.0 goods-receipt realisation variances: delivered vs declared beyond tolerance.</summary>
     public static async Task<IResult> Variances(NpgsqlDataSource ds, UserScope scope, int? limit)
     {
-        var scopeAnd = scope.AllEntities ? "" : " and l.entity_id = @scopeEntity";
+        var scopeAnd = Sites.RowFilter(scope);
         var sql = $"""
             with v as (
                 select l.data->>'Location' as location,
                        l.data->>'TPB No.' as "tpbNo",
                        l.data->>'Document BC / No' as "docNo",
-                       nullif(l.data->>'Document BC / Date','')::date as "docDate",
+                       {Dt("l.data->>'Document BC / Date'")} as "docDate",
                        l.data->>'Vendor Name' as vendor,
                        l.data->>'Material / Code' as material,
                        l.data->>'Material / Description' as description,
-                       nullif(l.data->>'BC / Qty','')::numeric as "bcQty",
+                       {Num("l.data->>'BC / Qty'")} as "bcQty",
                        l.data->>'BC / UOM' as uom,
-                       nullif(l.data->>'Realization of Good Receipts / Delivery Qty','')::numeric as "deliveryQty",
-                       nullif(l.data->>'Realization of Good Receipts / Complete Qty','')::numeric as "completeQty",
+                       {Num("l.data->>'Realization of Good Receipts / Delivery Qty'")} as "deliveryQty",
+                       {Num("l.data->>'Realization of Good Receipts / Complete Qty'")} as "completeQty",
                        coalesce(
-                           nullif(l.data->>'Realization of Good Receipts / (+/-)','')::numeric,
-                           nullif(l.data->>'Realization of Good Receipts / Delivery Qty','')::numeric
-                             - nullif(l.data->>'BC / Qty','')::numeric) as variance,
-                       nullif(replace(replace(l.data->>'BC / Tolerance','%',''),' ',''),'')::numeric as "tolerancePct"
+                           {Num("l.data->>'Realization of Good Receipts / (+/-)'")},
+                           {Num("l.data->>'Realization of Good Receipts / Delivery Qty'")}
+                             - {Num("l.data->>'BC / Qty'")}) as variance,
+                       {Num("replace(replace(l.data->>'BC / Tolerance','%',''),' ','')")} as "tolerancePct"
                 from bc.document_lines l
                 where l.template = 'BC40'{scopeAnd}
             )
@@ -95,16 +102,16 @@ public static class Lpm
             """;
 
         await using var con = await ds.OpenConnectionAsync();
-        var rows = (await con.QueryAsync(sql, new { scopeEntity = scope.EntityId, limit = Math.Clamp(limit ?? 100, 1, 500) })).ToList();
+        var rows = (await con.QueryAsync(sql, new { scopeSites = scope.SiteIds, scopeCompanies = scope.CompanyIds, limit = Math.Clamp(limit ?? 100, 1, 500) })).ToList();
         var summary = await con.QueryFirstAsync($"""
             select count(*) filter (where coalesce(
-                       nullif(l.data->>'Realization of Good Receipts / (+/-)','')::numeric,
-                       nullif(l.data->>'Realization of Good Receipts / Delivery Qty','')::numeric
-                         - nullif(l.data->>'BC / Qty','')::numeric) <> 0) as "withVariance",
+                       {Num("l.data->>'Realization of Good Receipts / (+/-)'")},
+                       {Num("l.data->>'Realization of Good Receipts / Delivery Qty'")}
+                         - {Num("l.data->>'BC / Qty'")}) <> 0) as "withVariance",
                    count(*) filter (where l.data ? 'Realization of Good Receipts / Delivery Qty') as "deliveryTracked",
                    count(*) as "totalLines"
             from bc.document_lines l where l.template = 'BC40'{scopeAnd}
-            """, new { scopeEntity = scope.EntityId });
+            """, new { scopeSites = scope.SiteIds, scopeCompanies = scope.CompanyIds });
         return Results.Ok(new
         {
             rows,

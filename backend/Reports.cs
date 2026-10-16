@@ -30,25 +30,48 @@ public record BuiltQuery(Catalog.Report Report, string Where, DynamicParameters 
 /// </summary>
 public static class Reports
 {
-    public static object CatalogList() => Catalog.Reports.Select(r => new
+    /// <param name="view">What the caller's site may see (see SiteReports).</param>
+    public static object CatalogList(SiteReports.View view) => Catalog.Reports.Select(r =>
     {
-        key = r.Key,
-        title = r.Title,
-        template = r.Template,
-        page = r.Page,
-        upload = r.Upload,                              // owns an upload template
-        browse = r.Browse,                              // offered in the report picker
-        defaults = r.Defaults,
-        fields = r.Fields.Select(f => new
+        var cols = view.Columns(r);
+        return new
         {
-            name = f.Name,                              // verbatim upload header — the stable key
-            label = f.Display,                          // what the user sees
-            type = f.Type.ToString().ToLowerInvariant(),
-            group = f.Group
-        })
+            key = r.Key,
+            title = r.Title,
+            template = r.Template,
+            page = r.Page,
+            upload = r.Upload,                          // owns an upload template
+            browse = r.Browse && view.Sees(r),          // offered in the report picker
+            defaults = DefaultsFor(r, cols),
+            // Every field stays listed — the Ingestion page describes the full upload template —
+            // and `visible` says whether this user's site may show it on the report screens.
+            fields = r.Fields.Select(f => new
+            {
+                name = f.Name,                          // verbatim upload header — the stable key
+                label = f.Display,                      // what the user sees
+                type = f.Type.ToString().ToLowerInvariant(),
+                group = f.Group,
+                optIn = f.OptIn,
+                visible = cols is null || cols.Contains(f.Name)
+            })
+        };
     });
 
-    public static (BuiltQuery? built, IResult? error) Build(string key, QueryRequest req, UserScope scope)
+    /// <summary>
+    /// The grid's opening columns for a site's column set: the report defaults it still shows,
+    /// then any opt-in column it switched on — enabling one is asking to see it.
+    /// </summary>
+    public static string[] DefaultsFor(Catalog.Report r, HashSet<string>? cols)
+    {
+        if (cols is null) return r.Defaults;
+        var d = r.Defaults.Where(cols.Contains)
+            .Concat(r.Fields.Where(f => f.OptIn && cols.Contains(f.Name)).Select(f => f.Name))
+            .ToArray();
+        return d.Length > 0 ? d : r.Fields.Select(f => f.Name).Where(cols.Contains).Take(12).ToArray();
+    }
+
+    /// <param name="view">The caller's site configuration; hidden columns are refused. Null = no narrowing.</param>
+    public static (BuiltQuery? built, IResult? error) Build(string key, QueryRequest req, UserScope scope, SiteReports.View? view = null)
     {
         var report = Catalog.Get(key);
         if (report is null)
@@ -57,15 +80,24 @@ public static class Reports
             return (null, Results.Problem(statusCode: 404, title: "RPT-001", detail: $"Unknown report key '{key}'."));
 
         var byName = report.Fields.ToDictionary(f => f.Name);
-        var columns = (req.Columns is { Length: > 0 } ? req.Columns : report.Defaults).Distinct().ToArray();
+        var allowed = view?.Columns(report);
+        IResult? Hidden(string c) => allowed is null || allowed.Contains(c) ? null
+            : Results.Problem(statusCode: 403, title: "SCOPE-004", detail: $"Column '{c}' is not enabled for your site.");
+        var columns = (req.Columns is { Length: > 0 } ? req.Columns : DefaultsFor(report, allowed)).Distinct().ToArray();
         foreach (var c in columns)
+        {
             if (!byName.ContainsKey(c))
                 return (null, Results.Problem(statusCode: 400, title: "RPT-001", detail: $"Unknown column '{c}'."));
+            if (Hidden(c) is { } h) return (null, h);
+        }
 
         var sorts = req.Sort ?? Array.Empty<SortSpec>();
         foreach (var s in sorts)
+        {
             if (!byName.ContainsKey(s.Field))
                 return (null, Results.Problem(statusCode: 400, title: "RPT-001", detail: $"Unknown sort field '{s.Field}'."));
+            if (Hidden(s.Field) is { } h) return (null, h);
+        }
 
         // A report may draw its rows from a predicate rather than a bare template match — one
         // uploaded Aset dan Sparepart file is read as Sparepart, Aset and part of Bahan Baku.
@@ -73,18 +105,24 @@ public static class Reports
         var p = new DynamicParameters();
         p.Add("template", report.Template);
 
-        // scope: blank filter = all within MY scope, never all rows (FR-R2a)
-        if (!scope.AllEntities)
-        {
-            where.Append(" and l.entity_id = @scopeEntity");
-            p.Add("scopeEntity", scope.EntityId);
-        }
+        // scope: blank filter = all within MY scope, never all rows (FR-R2a). A non-Super-Admin
+        // only ever sees rows of their assigned companies and sites.
+        where.Append(Sites.RowFilter(scope));
+        Sites.Params(p, scope);
         var f = req.Filters ?? new();
-        if (f.TryGetValue("entityId", out var entS) && long.TryParse(entS, out var ent))
+        if (f.TryGetValue("siteId", out var siteS) && long.TryParse(siteS, out var site))
         {
-            if (!scope.AllEntities && ent != scope.EntityId)
-                return (null, Results.Problem(statusCode: 403, title: "SCOPE-001", detail: "Requested entity outside your scope."));
-            where.Append(" and l.entity_id = @ent"); p.Add("ent", ent);
+            // Narrowing within scope only; the row filter above still applies, so an out-of-scope
+            // site simply returns nothing — but say so rather than show an empty grid.
+            if (!scope.AllSites && !scope.SiteIds.Contains(site))
+                return (null, Results.Problem(statusCode: 403, title: "SCOPE-001", detail: "Requested site outside your scope."));
+            where.Append(" and l.site_id = @site"); p.Add("site", site);
+        }
+        if (f.TryGetValue("companyId", out var coS) && long.TryParse(coS, out var co))
+        {
+            if (!scope.AllCompanies && !scope.CompanyIds.Contains(co))
+                return (null, Results.Problem(statusCode: 403, title: "SCOPE-002", detail: "Requested company outside your scope."));
+            where.Append(" and l.company_id = @co"); p.Add("co", co);
         }
         if (f.TryGetValue("dateFrom", out var df) && DateOnly.TryParse(df, out var dFrom))
         { where.Append(" and l.doc_date >= @dFrom"); p.Add("dFrom", dFrom); }
@@ -92,7 +130,9 @@ public static class Reports
         { where.Append(" and l.doc_date <= @dTo"); p.Add("dTo", dTo); }
         if (f.TryGetValue("search", out var q) && !string.IsNullOrWhiteSpace(q))
         {
-            var ors = report.SearchFields.Select(sf => $"l.data->>'{Sql(sf)}' ilike @search");
+            // Search only what the site can see, so a hidden column cannot be probed by searching it.
+            var ors = report.SearchFields.Where(sf => allowed is null || allowed.Contains(sf))
+                .Select(sf => $"l.data->>'{Sql(sf)}' ilike @search").DefaultIfEmpty("false");
             where.Append(" and (").Append(string.Join(" or ", ors)).Append(')');
             p.Add("search", "%" + q.Trim() + "%");
         }
@@ -104,23 +144,52 @@ public static class Reports
         return (new BuiltQuery(report, where.ToString(), p, order, columns), null);
     }
 
-    public static string Expr(Field fld) => fld.Type switch
+    /// <summary>
+    /// The SELECT expression for a field. A repeating field projects its JSON array as text (a
+    /// scalar stored before the field repeated is wrapped as a one-entry array); call
+    /// <see cref="Value"/> on what comes back. Every other field projects like <see cref="Expr"/>.
+    /// </summary>
+    public static string Proj(Field fld)
     {
-        FieldType.Number => $"nullif(l.data->>'{Sql(fld.Name)}','')::numeric",
-        FieldType.Date => $"nullif(l.data->>'{Sql(fld.Name)}','')::date",
-        _ => $"l.data->>'{Sql(fld.Name)}'"
-    };
+        if (!fld.Repeats) return Expr(fld);
+        var j = $"l.data->'{Sql(fld.Name)}'";
+        return $"(case when {j} is null or jsonb_typeof({j}) = 'null' then null " +
+               $"when jsonb_typeof({j}) = 'array' then {j} else jsonb_build_array({j}) end)::text";
+    }
 
-    public static async Task<IResult> Query(NpgsqlDataSource ds, string key, QueryRequest req, UserScope scope, string? ip = null)
+    /// <summary>A projected cell as it leaves the API: a repeating field becomes a real JSON array.</summary>
+    public static object? Value(Field fld, object? raw) =>
+        fld.Repeats && raw is string json ? System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(json) : raw;
+
+    /// <summary>
+    /// The sort (and typed) expression for a field. A repeating field sorts by its first entry.
+    /// </summary>
+    public static string Expr(Field fld)
     {
-        var (built, error) = Build(key, req, scope);
+        var col = fld.Repeats
+            ? $"coalesce(l.data->'{Sql(fld.Name)}'->>0, l.data->>'{Sql(fld.Name)}')"
+            : $"l.data->>'{Sql(fld.Name)}'";
+        // Guard the cast so ONE malformed cell can't 500 the whole report. A "Number"/"Date" column
+        // that holds a value which will not cast (e.g. a dash, text, or a stray symbol that slipped
+        // through ingestion) projects and sorts as NULL instead of throwing "invalid input syntax".
+        return fld.Type switch
+        {
+            FieldType.Number => $"(case when btrim({col}) ~ '^-?[0-9]+(\\.[0-9]+)?$' then btrim({col})::numeric end)",
+            FieldType.Date => $"(case when {col} ~ '^\\d{{4}}-\\d{{2}}-\\d{{2}}' then ({col})::date end)",
+            _ => col
+        };
+    }
+
+    public static async Task<IResult> Query(NpgsqlDataSource ds, string key, QueryRequest req, UserScope scope, string? ip = null, SiteReports.View? view = null)
+    {
+        var (built, error) = Build(key, req, scope, view);
         if (error != null) return error;
         var b = built!;
         var byName = b.Report.Fields.ToDictionary(f => f.Name);
 
         var size = Math.Clamp(req.Page?.Size ?? 25, 1, 200);
         var offset = Math.Max(req.Page?.Offset ?? 0, 0);
-        var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Expr(byName[c])} as c{i}"));
+        var proj = string.Join(", ", b.Columns.Select((c, i) => $"{Proj(byName[c])} as c{i}"));
 
         // The line id travels with each row so the grid can offer per-row delete (FR-R14). It is
         // an internal key, returned under a reserved name the column projection can never collide with.
@@ -146,7 +215,7 @@ public static class Reports
         {
             var o = new Dictionary<string, object?>();
             o["__id"] = r["__id"];
-            for (int i = 0; i < b.Columns.Length; i++) o[b.Columns[i]] = r[$"c{i}"];
+            for (int i = 0; i < b.Columns.Length; i++) o[b.Columns[i]] = Value(byName[b.Columns[i]], r[$"c{i}"]);
             return o;
         });
 
@@ -175,14 +244,14 @@ public static class Reports
     /// reach another entity's rows even by passing ids. Every deletion is captured in the audit
     /// trail with a bounded snapshot of what was removed, so an append-only record survives.
     /// </summary>
-    public static async Task<IResult> Delete(NpgsqlDataSource ds, string key, DeleteRequest req, UserScope scope, string? ip = null)
+    public static async Task<IResult> Delete(NpgsqlDataSource ds, string key, DeleteRequest req, UserScope scope, string? ip = null, SiteReports.View? view = null)
     {
         var mode = (req.Mode ?? "").ToLowerInvariant();
         if (mode is not ("ids" or "filter"))
             return Results.Problem(statusCode: 400, title: "VAL-001", detail: "mode must be 'ids' or 'filter'.");
 
         // Reuse the query builder for the WHERE and the scope bound. Columns/sort are irrelevant here.
-        var (built, error) = Build(key, new QueryRequest(req.Filters, null, null, null), scope);
+        var (built, error) = Build(key, new QueryRequest(req.Filters, null, null, null), scope, view);
         if (error != null) return error;
         var b = built!;
         var where = b.Where;
@@ -252,8 +321,11 @@ public static class Reports
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
             throw new ArgumentException("Field name out of range.", nameof(name));
+        // '+' occurs in a real catalogue header ("Realization of Good Receipts / (+/-)"); it is
+        // harmless inside a single-quoted JSONB key and the whitelist against the report's own
+        // fields is the real control. Omitting it 500'd any view that selected or sorted that column.
         foreach (var c in name)
-            if (!(char.IsLetterOrDigit(c) || c is ' ' or '.' or '/' or '-' or '_' or '(' or ')' or '%' or '"' or '\''))
+            if (!(char.IsLetterOrDigit(c) || c is ' ' or '.' or '/' or '-' or '_' or '(' or ')' or '%' or '+' or '"' or '\''))
                 throw new ArgumentException($"Field name contains an unexpected character: {name}", nameof(name));
         return name.Replace("'", "''");
     }

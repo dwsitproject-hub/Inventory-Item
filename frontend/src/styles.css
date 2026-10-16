@@ -61,6 +61,8 @@ h1.page{font-size:20px;margin:0 0 2px;color:var(--navy)}
 
 /* table */
 .tablewrap{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+/* the column chooser drops below a short grid (few or no rows) — don't clip it while open */
+.tablewrap:has(.colpanel){overflow:visible}
 .tbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);position:relative;gap:10px;flex-wrap:wrap}
 .tbar .info{font-size:12.5px;color:var(--muted)}
 .gridscroll{overflow:auto;max-height:62vh}
@@ -73,6 +75,11 @@ table.grid th.dragging{opacity:.35}
 table.grid th.dragover{border-left:3px solid var(--red)}
 table.grid td{padding:9px 12px;border-bottom:1px solid #eef1f4;white-space:nowrap}
 table.grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+/* several values in one cell (e.g. Dokumen Asal Barang): stacked, one per origin document */
+table.grid td.multi{padding-top:4px;padding-bottom:4px;vertical-align:top}
+table.grid td.multi>div{padding:5px 0;line-height:16px}
+table.grid td.multi>div+div{border-top:1px dashed #dfe4ea}
+table.grid tr:has(td.multi) td{vertical-align:top}
 table.grid tr:hover td{background:#fafbfc}
 .pager{display:flex;align-items:center;justify-content:space-between;padding:11px 16px;font-size:12px;color:var(--muted);gap:10px;flex-wrap:wrap}
 .pager .pg{display:flex;gap:4px}
@@ -114,3 +121,13 @@ table.grid tr.rowsel:hover td{background:#fbe3e1}
 .modal h3{margin:0 0 10px;font-size:16px;color:var(--red)}
 .modal p{font-size:13px;color:var(--ink);line-height:1.5;margin:0 0 14px}
 .modal .fld{margin-bottom:14px}
+
+/* SSO divider on the login card */
+.ssodiv{display:flex;align-items:center;text-align:center;color:var(--muted);font-size:11px;margin:12px 0}
+.ssodiv::before,.ssodiv::after{content:"";flex:1;border-bottom:1px solid var(--line)}
+.ssodiv span{padding:0 10px;text-transform:uppercase;letter-spacing:.4px}
+
+/* Per-company logo in the sidebar brand, and company-assignment checkboxes (Admin) */
+.brandlogo{max-height:34px;max-width:130px;object-fit:contain;display:block;margin-bottom:4px}
+.cosel{display:flex;flex-wrap:wrap;gap:8px 16px}
+.cochk{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;white-space:nowrap}

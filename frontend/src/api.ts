@@ -2,7 +2,13 @@ const BASE = '/api/v1'
 
 /** `name` is the verbatim upload header (stable key for queries, sorts, saved views);
  *  `label` is the customs-terminology display name. */
-export type FieldMeta = { name: string; label: string; type: 'text' | 'number' | 'date'; group: string }
+export type FieldMeta = {
+  name: string; label: string; type: 'text' | 'number' | 'date'; group: string
+  /** a column a site must switch on (Admin → Master Data); left out of the starter set */
+  optIn?: boolean
+  /** whether the signed-in user's site may show it on the report screens */
+  visible?: boolean
+}
 export type ReportMeta = {
   key: string; title: string; template: string
   /** which screen hosts it: 'reports' (customs documents) or 'movement' (inventory movement) */
@@ -17,13 +23,14 @@ export type SortSpec = { field: string; dir: 'asc' | 'desc' }
 
 export type User = {
   email: string; fullName: string; role: string
-  allEntities: boolean; entityId: number | null; siteId: number | null
+  /** all sites of the user's companies; otherwise only `siteIds` */
+  allSites: boolean; siteIds: number[]
 }
 
-export type PagePerm = { view: boolean; insert: boolean; edit: boolean; delete: boolean }
+export type PagePerm = { view: boolean; insert: boolean; edit: boolean; delete: boolean; export: boolean }
 export type PermissionMap = Record<string, PagePerm>
 
-const NO_PERM: PagePerm = { view: false, insert: false, edit: false, delete: false }
+const NO_PERM: PagePerm = { view: false, insert: false, edit: false, delete: false, export: false }
 
 export function getPermissions(): PermissionMap {
   const raw = sessionStorage.getItem('bc.perms')
@@ -77,6 +84,35 @@ export function clearSession() {
   sessionStorage.removeItem('bc.token')
   sessionStorage.removeItem('bc.user')
   sessionStorage.removeItem('bc.perms')
+  sessionStorage.removeItem('bc.company')
+  sessionStorage.removeItem('bc.sites')
+}
+
+// ---- multi-tenant company ----
+/** Header company shown after login: present only when the user belongs to exactly one company. */
+export type MeCompany = { id: number | null; name: string | null; logo: string | null }
+export function getCompany(): MeCompany | null {
+  const raw = sessionStorage.getItem('bc.company')
+  return raw ? JSON.parse(raw) as MeCompany : null
+}
+export function setCompany(c: MeCompany | null | undefined) {
+  if (c && c.id != null) sessionStorage.setItem('bc.company', JSON.stringify(c))
+  else sessionStorage.removeItem('bc.company')
+}
+
+/** Sites the signed-in user may see (from /me) — the report screens' Site filter offers these. */
+export type MySite = { id: number; name: string; companyId: number }
+export function getMySites(): MySite[] {
+  const raw = sessionStorage.getItem('bc.sites')
+  return raw ? JSON.parse(raw) as MySite[] : []
+}
+export function setMySites(s: MySite[] | null | undefined) {
+  sessionStorage.setItem('bc.sites', JSON.stringify(s ?? []))
+}
+/** Refresh the stored user from /me, so a session signed in before a scope change shows it too. */
+export function setUserScope(u: Partial<User> | null | undefined) {
+  const cur = getUser()
+  if (cur && u) sessionStorage.setItem('bc.user', JSON.stringify({ ...cur, allSites: u.allSites, siteIds: u.siteIds }))
 }
 
 async function request(path: string, opts: RequestInit = {}): Promise<any> {
@@ -111,12 +147,135 @@ export async function login(email: string, password: string): Promise<void> {
   // effective page permissions drive nav and action gating (the API enforces them too)
   const profile = await me()
   setPermissions(profile.permissions ?? {})
+  setCompany(profile.company)
+  setMySites(profile.sites)
+}
+
+// ---- SSO (DWS Hub, OIDC + PKCE) ----
+export type SsoInfo = { enabled: boolean; authorizeEndpoint?: string; clientId?: string; redirectUri?: string; scope?: string }
+export const ssoInfo = (): Promise<SsoInfo> => request('/auth/sso/info')
+
+function b64url(bytes: Uint8Array): string {
+  let s = ''
+  bytes.forEach(b => { s += String.fromCharCode(b) })
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+function randB64url(len = 32): string { return b64url(crypto.getRandomValues(new Uint8Array(len))) }
+async function s256(verifier: string): Promise<string> {
+  const bytes = new TextEncoder().encode(verifier)
+  // crypto.subtle exists only in secure contexts (HTTPS or localhost). Staging is served over
+  // plain HTTP, where it is undefined and the button failed with "reading 'digest'". Only the
+  // hash needs a fallback: crypto.getRandomValues is available in insecure contexts too.
+  const digest = crypto.subtle ? new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)) : sha256(bytes)
+  return b64url(digest)
+}
+
+const SHA256_K = new Uint32Array([
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+])
+const ror = (x: number, n: number) => (x >>> n) | (x << (32 - n))
+
+/** SHA-256 (FIPS 180-4) for insecure contexts without crypto.subtle; used only for the PKCE challenge. */
+function sha256(data: Uint8Array): Uint8Array {
+  const H = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19])
+  const buf = new Uint8Array(((data.length + 9 + 63) >> 6) << 6)   // message + 0x80 + 64-bit length, padded to 64 bytes
+  buf.set(data)
+  buf[data.length] = 0x80
+  const dv = new DataView(buf.buffer)
+  const bits = data.length * 8
+  dv.setUint32(buf.length - 8, Math.floor(bits / 0x100000000))
+  dv.setUint32(buf.length - 4, bits >>> 0)
+  const W = new Uint32Array(64)
+  for (let off = 0; off < buf.length; off += 64) {
+    for (let i = 0; i < 16; i++) W[i] = dv.getUint32(off + i * 4)
+    for (let i = 16; i < 64; i++) {
+      const s0 = ror(W[i - 15], 7) ^ ror(W[i - 15], 18) ^ (W[i - 15] >>> 3)
+      const s1 = ror(W[i - 2], 17) ^ ror(W[i - 2], 19) ^ (W[i - 2] >>> 10)
+      W[i] = W[i - 16] + s0 + W[i - 7] + s1
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7]
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & f) ^ (~e & g)) + SHA256_K[i] + W[i]) | 0
+      const t2 = ((ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0
+    }
+    H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h
+  }
+  const out = new Uint8Array(32)
+  const odv = new DataView(out.buffer)
+  for (let i = 0; i < 8; i++) odv.setUint32(i * 4, H[i])
+  return out
+}
+
+/** Begin the OIDC authorize redirect. Stores the PKCE verifier, state and nonce for the callback. */
+export async function ssoBegin(info: SsoInfo): Promise<void> {
+  const verifier = randB64url(48)
+  const state = randB64url()
+  const nonce = randB64url()
+  sessionStorage.setItem('bc.sso', JSON.stringify({ verifier, state, nonce, redirectUri: info.redirectUri }))
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: info.clientId!,
+    redirect_uri: info.redirectUri!,
+    code_challenge: await s256(verifier),
+    code_challenge_method: 'S256',
+    scope: info.scope || 'openid profile email',
+    state, nonce,
+  })
+  window.location.href = `${info.authorizeEndpoint}?${params.toString()}`
+}
+
+/**
+ * Complete the flow and establish the session. Two initiation paths land here:
+ *
+ *  - **SP-initiated** (our own "Sign in with DWS Hub" button): ssoBegin() generated the PKCE
+ *    pair and stashed the verifier + state in sessionStorage. We match state and use that verifier.
+ *  - **Hub portal launch** (IdP-initiated): the Hub generated the PKCE pair, ran authorize with
+ *    the user's existing Hub session, and redirected here with `code` AND `code_verifier` in the
+ *    URL. There is nothing in sessionStorage. We use the URL-supplied verifier; there is no local
+ *    state to compare (inherent to IdP-initiated), so trust rests on the single-use code and the
+ *    id_token verification the backend performs (signature via JWKS, iss, aud, exp).
+ */
+export async function ssoComplete(code: string, state: string | null, verifierFromUrl?: string | null): Promise<void> {
+  let payload: { code: string; codeVerifier: string; nonce?: string; redirectUri?: string }
+
+  if (verifierFromUrl) {
+    // Hub portal launch — the Hub handed us the verifier.
+    sessionStorage.removeItem('bc.sso')
+    payload = { code, codeVerifier: verifierFromUrl }   // backend uses its configured redirect_uri
+  } else {
+    // SP-initiated — our ssoBegin stored the verifier keyed to this state.
+    const raw = sessionStorage.getItem('bc.sso')
+    sessionStorage.removeItem('bc.sso')
+    if (!raw) throw new Error('Sign-in session expired. Please try again.')
+    const saved = JSON.parse(raw) as { verifier: string; state: string; nonce: string; redirectUri?: string }
+    if (state !== saved.state) throw new Error('Sign-in could not be verified (state mismatch). Please try again.')
+    payload = { code, codeVerifier: saved.verifier, nonce: saved.nonce, redirectUri: saved.redirectUri }
+  }
+
+  const data = await request('/auth/sso/callback', { method: 'POST', body: JSON.stringify(payload) })
+  sessionStorage.setItem('bc.token', data.accessToken)
+  sessionStorage.setItem('bc.user', JSON.stringify(data.user))
+  const profile = await me()
+  setPermissions(profile.permissions ?? {})
+  setCompany(profile.company)
+  setMySites(profile.sites)
 }
 
 // ---- role management ----
-export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean; delete: boolean }
+export type RolePermRow = { page: string; view: boolean; insert: boolean; edit: boolean; delete: boolean; export: boolean }
 export type RoleMatrix = {
-  pages: { key: string; title: string; hasInsert: boolean; hasEdit: boolean; hasDelete: boolean; insertMeans: string; editMeans: string; deleteMeans: string }[]
+  pages: {
+    key: string; title: string; hasInsert: boolean; hasEdit: boolean; hasDelete: boolean; hasExport: boolean
+    insertMeans: string; editMeans: string; deleteMeans: string; exportMeans: string
+  }[]
   roles: { role: string; locked: boolean; pages: RolePermRow[] }[]
   canEdit: boolean
 }
@@ -153,11 +312,26 @@ export function queryReport(key: string, body: {
   return request(`/reports/${key}/query`, { method: 'POST', body: JSON.stringify(body) })
 }
 
-export async function uploadFile(file: File): Promise<any> {
+export async function uploadFile(file: File, companyId?: number | null, siteId?: number | null): Promise<any> {
   const fd = new FormData()
   fd.append('file', file)
+  if (companyId != null) fd.append('companyId', String(companyId))
+  if (siteId != null) fd.append('siteId', String(siteId))
   return request('/ingestions/upload', { method: 'POST', body: fd })
 }
+
+// ---- companies (multi-tenant admin) ----
+export type Company = { id: number; name: string; active: boolean; hasLogo: boolean; userCount: number }
+/** A company the user may upload for, with the sites of it they may upload for. */
+export type PickCompany = { id: number; name: string; sites: { id: number; name: string }[] }
+export const companies = (): Promise<Company[]> => request('/companies')
+export const createCompany = (body: { name: string; active: boolean; logoBase64?: string | null; logoContentType?: string | null }) =>
+  request('/companies', { method: 'POST', body: JSON.stringify(body) })
+export const updateCompany = (id: number, body: { name: string; active: boolean; logoBase64?: string | null; logoContentType?: string | null }) =>
+  request(`/companies/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const setUserCompanies = (userId: number, companyIds: number[]) =>
+  request(`/admin/users/${userId}/companies`, { method: 'PUT', body: JSON.stringify({ companyIds }) })
+export const pickableCompanies = (): Promise<PickCompany[]> => request('/companies/pickable')
 
 // ---- saved views (FR-R12) ----
 export type SavedView = { id: number; name: string | null; columns: string[]; sorts: SortSpec[]; pageSize: number }
@@ -197,25 +371,29 @@ export async function downloadTemplate(key: string): Promise<void> {
 // ---- admin (FR-A1/A3/A4) ----
 export type AdminUser = {
   id: number; email: string; fullName: string; role: string; status: string
-  allEntities: boolean; entityId: number | null; siteId: number | null
-  entityName?: string; siteName?: string; createdAt: string
+  allSites: boolean; siteIds: number[]; siteNames: string; createdAt: string
+  companyIds: number[]; companyNames: string
 }
 export const adminUsers = (): Promise<{ users: AdminUser[]; roles: string[] }> => request('/admin/users')
 export const adminCreateUser = (u: {
-  email: string; fullName: string; role: string; allEntities: boolean
-  entityId: number | null; siteId: number | null; password: string
+  email: string; fullName: string; role: string; allSites: boolean
+  siteIds: number[]; password: string; companyIds: number[]
 }) => request('/admin/users', { method: 'POST', body: JSON.stringify(u) })
 export const adminSetStatus = (id: number, status: 'active' | 'disabled') =>
   request(`/admin/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) })
 export const adminResetPassword = (id: number, password: string) =>
   request(`/admin/users/${id}/reset`, { method: 'POST', body: JSON.stringify({ password }) })
+export const setUserSites = (id: number, allSites: boolean, siteIds: number[]) =>
+  request(`/admin/users/${id}/sites`, { method: 'PUT', body: JSON.stringify({ allSites, siteIds }) })
 export const adminMaster = () => request('/admin/master')
-export const adminAddEntity = (code: string, name: string) =>
-  request('/admin/entities', { method: 'POST', body: JSON.stringify({ code, name }) })
-export const adminAddSite = (entityId: number, name: string) =>
-  request('/admin/sites', { method: 'POST', body: JSON.stringify({ entityId, name }) })
-export const adminAddPermit = (entityId: number, siteId: number | null, permitNo: string) =>
-  request('/admin/tpb-permits', { method: 'POST', body: JSON.stringify({ entityId, siteId, permitNo }) })
+export const adminAddSite = (companyId: number, name: string) =>
+  request('/admin/sites', { method: 'POST', body: JSON.stringify({ companyId, name }) })
+/** Which reports a site sees (per page, an empty selection means every report on that page), and
+ *  per report which columns — a report left out uses its starter columns. */
+export const adminSetSiteReports = (siteId: number, keys: string[], columns: Record<string, string[]>) =>
+  request(`/admin/sites/${siteId}/reports`, { method: 'PUT', body: JSON.stringify({ keys, columns }) })
+export const adminAddPermit = (companyId: number, siteId: number | null, permitNo: string) =>
+  request('/admin/tpb-permits', { method: 'POST', body: JSON.stringify({ companyId, siteId, permitNo }) })
 
 // ---- audit trail (FR-A7) ----
 export type AuditEvent = {

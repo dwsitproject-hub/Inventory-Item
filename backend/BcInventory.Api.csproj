@@ -16,4 +16,9 @@
     <PackageReference Include="ClosedXML" Version="0.102.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- tests/BcInventory.Api.Tests builds site-visibility snapshots without a database -->
+    <InternalsVisibleTo Include="BcInventory.Api.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { can, clearSession, getToken, getUser, hasPermissions, landingPath, me, setPermissions } from './api'
+import { can, clearSession, getCompany, getMySites, getToken, getUser, hasPermissions, landingPath, me, setCompany, setMySites, setPermissions, setUserScope } from './api'
 import Bell from './components/Bell'
 import Login from './pages/Login'
+import SsoCallback from './pages/SsoCallback'
+import SsoStart from './pages/SsoStart'
 import Dashboard from './pages/Dashboard'
 import Reports from './pages/Reports'
 import Ingestion from './pages/Ingestion'
@@ -18,12 +20,14 @@ function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app">
       <div className="brand">
-        <div className="logo">PT SPC</div>
+        {/* Per-company logo: shown only when the user belongs to exactly one company that has a
+            logo (getCompany() is null for Super Admin / multi-company users, so no logo then). */}
+        {getCompany()?.logo && <img className="brandlogo" src={getCompany()!.logo!} alt={getCompany()!.name ?? ''} />}
         <div><b>BC Inventory</b><span>Reporting System</span></div>
       </div>
       <div className="top">
         <div className="scope">
-          Scope: <b>{user.allEntities ? 'All entities' : `Entity #${user.entityId}${user.siteId ? ' · Site #' + user.siteId : ''}`}</b>
+          Scope: <b>{user.allSites ? 'All sites' : (getMySites().map(s => s.name).join(', ') || 'No site assigned')}</b>
           {' '}· local Docker test
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
@@ -83,12 +87,12 @@ function Protected({ children, page }: { children: React.ReactNode; page?: strin
 export default function App() {
   // Permissions must be present before any page can be gated — a session created before
   // permissions existed (or any reload) would otherwise be treated as "no access".
-  const [ready, setReady] = useState(() => !getToken() || hasPermissions())
+  const [ready, setReady] = useState(() => !getToken() || (hasPermissions() && sessionStorage.getItem('bc.sites') !== null))
 
   useEffect(() => {
     if (ready) return
     me()
-      .then(p => setPermissions(p.permissions ?? {}))
+      .then(p => { setPermissions(p.permissions ?? {}); setCompany(p.company); setMySites(p.sites); setUserScope(p.user) })
       .catch(() => { /* 401 already redirects to login; the API stays the real gate */ })
       .finally(() => setReady(true))
   }, [ready])
@@ -98,6 +102,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/sso/start" element={<SsoStart />} />
+      <Route path="/auth/sso/callback" element={<SsoCallback />} />
       <Route path="/dashboard" element={<Protected page="dashboard"><Dashboard /></Protected>} />
       <Route path="/reports" element={<Protected page="reports"><Reports /></Protected>} />
       <Route path="/movement" element={<Protected page="movement"><Movement /></Protected>} />
