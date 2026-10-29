@@ -230,12 +230,14 @@ function NotificationRouting() {
             <tbody>
               {data.users.map(u => {
                 const inactive = u.status !== 'active'
+                const locked = !data.canEdit || inactive || u.silenced
                 return (
                   <tr key={u.id}>
                     <td style={{ opacity: inactive ? .55 : 1, whiteSpace: 'normal' }}>
                       <b>{u.fullName}</b>
                       <div style={{ color: 'var(--muted)', fontSize: 11.5 }}>{u.email}</div>
                       {inactive && <span className="badge b-warn">disabled — receives nothing</span>}
+                      {!inactive && u.silenced && <span className="badge b-info">{u.role} — receives nothing</span>}
                     </td>
                     <td style={{ opacity: inactive ? .55 : 1 }}>{u.role}</td>
                     {u.events.map(e => {
@@ -244,12 +246,12 @@ function NotificationRouting() {
                       return (
                         <Fragment key={e.event}>
                           <td style={{ textAlign: 'center' }}>
-                            <input type="checkbox" checked={d.inApp} disabled={!data.canEdit || inactive}
+                            <input type="checkbox" checked={d.inApp} disabled={locked}
                               onChange={() => toggle(u.id, e.event, 'inApp')} />
                             {onDefault && <div style={{ fontSize: 9, color: 'var(--muted)' }}>default</div>}
                           </td>
                           <td style={{ textAlign: 'center' }}>
-                            <input type="checkbox" checked={d.email} disabled={!data.canEdit || inactive}
+                            <input type="checkbox" checked={d.email} disabled={locked}
                               onChange={() => toggle(u.id, e.event, 'email')} />
                           </td>
                         </Fragment>
@@ -269,7 +271,8 @@ function NotificationRouting() {
             <b>{e.title}</b> — {e.description} Default recipients: {e.defaultRoles.join(', ')}.
           </div>
         ))}
-        Disabled users receive nothing on either channel, whatever is ticked here. Every change is
+        Disabled users{data.silencedRoles.length > 0 && <> and the {data.silencedRoles.join(', ')} role</>} receive
+        nothing on either channel, whatever is ticked here. Every change is
         written to the audit log.
       </div>
     </>

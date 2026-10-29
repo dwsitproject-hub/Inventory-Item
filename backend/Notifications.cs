@@ -36,9 +36,19 @@ public static class Notifications
             new[] { Permissions.SuperAdmin, "Admin" }),
     };
 
+    /// <summary>
+    /// Roles that never receive notifications on any channel, whatever the routing matrix says.
+    /// Auditor is a read-only observer: alerts are operational and not addressed to it.
+    /// </summary>
+    public static readonly string[] SilencedRoles = { "Auditor" };
+
+    public static bool Silenced(string role) => SilencedRoles.Contains(role);
+
     /// <summary>Roles this event reaches when a user has no explicit setting. Null DefaultRoles means everyone.</summary>
-    private static string[] Defaults(string eventType) =>
-        Events.FirstOrDefault(e => e.Key == eventType)?.DefaultRoles ?? Permissions.Roles;
+    private static string[] Defaults(string eventType) => DefaultRoles(Events.FirstOrDefault(e => e.Key == eventType));
+
+    private static string[] DefaultRoles(EventDef? e) =>
+        (e?.DefaultRoles ?? Permissions.Roles).Where(r => !Silenced(r)).ToArray();
 
     private record Recipient(long UserId, string Email, bool InApp, bool WantsEmail);
 
@@ -58,8 +68,8 @@ public static class Notifications
             from auth.users u
             left join app.notification_subscriptions s
                    on s.user_id = u.id and s.event_type = @eventType
-            where u.status = 'active'
-            """, new { eventType, defaults }))
+            where u.status = 'active' and u.role <> all(@silenced)
+            """, new { eventType, defaults, silenced = SilencedRoles }))
             .Where(r => r.InApp || r.WantsEmail)
             .ToList();
 
@@ -105,6 +115,9 @@ public static class Notifications
 
     public static async Task<IResult> List(NpgsqlDataSource ds, UserScope scope)
     {
+        // Deliveries made before the user became an Auditor stay in the table but are not shown.
+        if (Silenced(scope.Role)) return Results.Ok(new { unread = 0L, items = Array.Empty<object>() });
+
         await using var con = await ds.OpenConnectionAsync();
         var items = (await con.QueryAsync("""
             select n.id, n.event_type as "eventType", n.title, n.body,
@@ -165,15 +178,17 @@ public static class Notifications
             u.fullName,
             u.role,
             u.status,
+            silenced = Silenced(u.role),
             events = Events.Select(e =>
             {
-                var fallback = (e.DefaultRoles ?? Permissions.Roles).Contains(u.role);
+                var fallback = DefaultRoles(e).Contains(u.role);
                 var explicitSetting = stored.TryGetValue(u.id + "|" + e.Key, out var v);
+                var silenced = Silenced(u.role);
                 return new
                 {
                     @event = e.Key,
-                    inApp = explicitSetting ? v.inApp : fallback,
-                    email = explicitSetting ? v.email : fallback,
+                    inApp = !silenced && (explicitSetting ? v.inApp : fallback),
+                    email = !silenced && (explicitSetting ? v.email : fallback),
                     isDefault = !explicitSetting
                 };
             })
@@ -186,8 +201,9 @@ public static class Notifications
                 e.Key,
                 e.Title,
                 e.Description,
-                defaultRoles = e.DefaultRoles ?? Permissions.Roles
+                defaultRoles = DefaultRoles(e)
             }),
+            silencedRoles = SilencedRoles,
             users = matrix,
             smtpConfigured = _cfg != null && Email.Configured(_cfg),
             canEdit = await Permissions.Require(scope, "admin", "edit") is null
@@ -204,10 +220,16 @@ public static class Notifications
                 return Results.Problem(statusCode: 400, title: "VAL-001", detail: $"Unknown notification event '{r.Event}'.");
 
         await using var con = await ds.OpenConnectionAsync();
-        var known = (await con.QueryAsync<long>("select id from auth.users")).ToHashSet();
+        var known = (await con.QueryAsync<(long id, string role)>("select id, role from auth.users"))
+            .ToDictionary(u => u.id, u => u.role);
         foreach (var r in rows)
-            if (!known.Contains(r.UserId))
+        {
+            if (!known.TryGetValue(r.UserId, out var role))
                 return Results.Problem(statusCode: 400, title: "VAL-001", detail: $"Unknown user #{r.UserId}.");
+            if (Silenced(role) && (r.InApp || r.Email))
+                return Results.Problem(statusCode: 400, title: "VAL-001",
+                    detail: $"User #{r.UserId} has the {role} role, which does not receive notifications.");
+        }
 
         foreach (var r in rows)
             await con.ExecuteAsync("""
