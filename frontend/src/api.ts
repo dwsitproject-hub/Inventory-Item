@@ -287,7 +287,9 @@ export const saveRolePermissions = (role: string, pages: RolePermRow[]) =>
 export type NotifEventPref = { event: string; inApp: boolean; email: boolean; isDefault: boolean }
 export type NotifMatrix = {
   events: { key: string; title: string; description: string; defaultRoles: string[] }[]
-  users: { id: number; email: string; fullName: string; role: string; status: string; events: NotifEventPref[] }[]
+  users: { id: number; email: string; fullName: string; role: string; status: string; silenced: boolean; events: NotifEventPref[] }[]
+  /** roles that never receive notifications, whatever the matrix says */
+  silencedRoles: string[]
   smtpConfigured: boolean
   canEdit: boolean
 }
@@ -348,6 +350,8 @@ export const deleteReportRows = (key: string, body: DeleteRowsBody): Promise<{ d
   request(`/reports/${key}/delete`, { method: 'POST', body: JSON.stringify(body) })
 
 // ---- notifications ----
+/** Mirrors Notifications.SilencedRoles on the API, which is the real gate. */
+export const receivesNotifications = (role: string) => role !== 'Auditor'
 export type Notification = { id: number; eventType: string; title: string; body?: string; createdAt: string; read: boolean }
 export const notifications = (): Promise<{ unread: number; items: Notification[] }> => request('/notifications')
 export const markAllRead = () => request('/notifications/read-all', { method: 'POST' })

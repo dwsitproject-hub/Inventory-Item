@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { can, clearSession, getCompany, getMySites, getToken, getUser, hasPermissions, landingPath, me, setCompany, setMySites, setPermissions, setUserScope } from './api'
+import { can, clearSession, getCompany, getMySites, getToken, getUser, hasPermissions, landingPath, me, receivesNotifications, setCompany, setMySites, setPermissions, setUserScope } from './api'
 import Bell from './components/Bell'
 import Login from './pages/Login'
 import SsoCallback from './pages/SsoCallback'
@@ -31,7 +31,7 @@ function Layout({ children }: { children: React.ReactNode }) {
           {' '}· local Docker test
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-          <Bell />
+          {receivesNotifications(user.role) && <Bell />}
           <div className="user">
             <div className="avatar">{initials}</div>
             <div><b style={{ fontSize: 12.5 }}>{user.fullName}</b><small>{user.role}</small></div>
